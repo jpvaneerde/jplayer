@@ -129,7 +129,10 @@ an outbox (two weeks) and use their own copy of the lyrics or ask LRCLIB themsel
 **JPlay Records (optional):** connect it under Settings with its address and a listener token, and songs heard
 while no player plays are matched against your collection (records and CDs in a format that room can play), just as
 before; a CD in a player gets its copy too. Without it, those songs are "heard" and a CD is "a CD" (spins then group
-by album). Plays are matched again every few hours, so a JPlay Records that was away catches up. The hub fetches the
+by album). Plays are matched again every few hours, so a JPlay Records that was away catches up. With **Keep JPlay
+Records' Spins up to date** (on by default) the hub also sends every play to JPlay Records, so its Spins pages and
+record pages keep counting; corrections and deletions made on the hub follow (JPlay Records needs the
+`/api/spins/hub-plays` endpoint for this). The hub fetches the
 covers of your records once with the same token. This needs the endpoints added to jplayrecords in
 `server/spins.ts` and `server/routes/spins.ts` (`matchForHub`, `exportForHub`) and covers that accept a listener
 token (`server/index.ts`).

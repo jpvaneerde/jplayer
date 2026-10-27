@@ -17,7 +17,7 @@ from datetime import datetime
 
 import requests
 
-from . import db, lyrics, records, spins
+from . import db, lyrics, records, records_sync, spins
 from .db import now
 
 log = logging.getLogger(__name__)
@@ -156,6 +156,7 @@ def _store_records_play(url: str, p: dict) -> None:
                  f"records:{p['id']}", p.get("created_at") or now())
     if cur.rowcount:
         _count("plays")
+        records_sync.mark_imported(cur.lastrowid)       # JPlay Records has it already
         db.run("INSERT OR IGNORE INTO rooms (name) VALUES (?)", p["room"])
 
 

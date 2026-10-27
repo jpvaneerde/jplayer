@@ -21,12 +21,13 @@ from .. import __version__
 from ..common import system
 from ..common.announce import HUB_TYPE, Announcer
 from ..common.updates import UpdateError
-from . import db, importer, lyrics, records, spins
+from . import db, importer, lyrics, records, records_sync, spins
 
 log = logging.getLogger(__name__)
 WEB_DIR = system.WEB_DIR / "hub"
 PORT = 8090
 PROCESS_EVERY = 20               # seconds between runs of the Spins worker
+SYNC_EVERY = 60                  # send new and changed plays to JPlay Records (when that's on)
 REMATCH_EVERY = 6 * 3600         # match "heard" plays to your records again (JPlay Records connected)
 
 
@@ -60,6 +61,10 @@ class RecordsBody(BaseModel):
     token: str | None = None        # empty/None = keep the saved token
 
 
+class SyncBody(BaseModel):
+    on: bool
+
+
 class ImportRecordsBody(BaseModel):
     url: str
     token: str
@@ -91,11 +96,14 @@ def _name() -> str:
 async def _worker() -> None:
     """Turn events into plays every few seconds; now and then match plays to your records again."""
     await asyncio.to_thread(spins.merge_duplicates)
-    last_rematch = 0.0
+    last_rematch = last_sync = 0.0
     loop = asyncio.get_running_loop()
     while True:
         try:
             await asyncio.to_thread(spins.process_events)
+            if records_sync.enabled() and loop.time() - last_sync > SYNC_EVERY:
+                last_sync = loop.time()
+                await asyncio.to_thread(records_sync.sync_once)
             if records.enabled() and loop.time() - last_rematch > REMATCH_EVERY:
                 last_rematch = loop.time()
                 n = await asyncio.to_thread(spins.rematch)
@@ -211,6 +219,7 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
         elif body.record is not None:
             if not await t(spins.set_play_record, play_id, body.record):
                 raise HTTPException(404, "That copy wasn't one of the suggestions")
+        await t(records_sync.changed, play_id)
         return {"ok": True}
 
     @app.delete("/api/plays/{play_id}")
@@ -285,7 +294,8 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
     async def get_settings() -> dict:
         cfg = records.config()
         return {"name": _name(), "records": {"url": str(db.setting("records_url", "") or ""), "token_set": bool(cfg),
-                                             "enabled": bool(cfg)}}
+                                             "enabled": bool(cfg), "sync": bool(db.setting("records_sync", True)),
+                                             "sync_status": records_sync.status}}
 
     @app.put("/api/settings/records")
     async def put_records(body: RecordsBody) -> dict:
@@ -294,6 +304,13 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
             db.set_setting("records_token", body.token.strip())
         result = await t(records.test) if records.enabled() else {"ok": True}
         return {**await get_settings(), "test": result}
+
+    @app.put("/api/settings/records/sync")
+    async def put_records_sync(body: SyncBody) -> dict:
+        db.set_setting("records_sync", body.on)
+        if body.on and records.enabled():
+            await t(records_sync.sync_once)
+        return await get_settings()
 
     @app.post("/api/settings/records/test")
     async def test_records() -> dict:

@@ -77,6 +77,13 @@ has player && [[ -z "${SKIP_BLUETOOTH:-}" ]] && pkgs+=(bluez bluez-tools bluez-a
 # The display: the microphone (PortAudio), radio recognition (ffmpeg), and the screen: cage + Chromium, with
 # fonts for every script (Japanese, Korean and Chinese lyrics) and emoji
 has display && pkgs+=(libportaudio2 ffmpeg cage wlr-randr fonts-noto-core fonts-noto-cjk)
+# A fresh Pi may still be installing its own updates: wait for that, and finish an install that was cut off
+for i in $(seq 1 60); do
+  fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1 || break
+  [[ $i -eq 1 ]] && echo "Waiting for another package install (the Pi's own updates) to finish…"
+  sleep 5
+done
+dpkg --configure -a
 apt-get update
 apt-get install -y --no-install-recommends "${pkgs[@]}"
 # Nice to have (not in every Raspberry Pi OS release): switching an HDMI screen to standby, and emoji

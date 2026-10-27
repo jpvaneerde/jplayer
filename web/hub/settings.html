@@ -40,6 +40,9 @@
       <button id="rematch">Match plays to my records again</button>
       <span class="muted small">Done by itself every few hours; use this after adding records.</span>
     </div>
+    <label class="check" style="margin-top: 14px;"><input type="checkbox" id="rec-sync"> Keep JPlay Records' Spins up to date</label>
+    <div class="muted small" id="rec-sync-status">Sends every play to JPlay Records too, so its Spins and its record pages
+      ("played 12 times") keep counting. Corrections and deletions made here follow.</div>
   </div>
 
   <h2>Import</h2>
@@ -135,6 +138,12 @@ async function loadRecords() {
   $('rec-token').placeholder = s.records.token_set ? 'Saved (leave empty to keep it)' : 'Paste the token';
   $('rec-off').hidden = !s.records.enabled;
   $('rematch').disabled = !s.records.enabled;
+  $('rec-sync').checked = s.records.sync; $('rec-sync').disabled = !s.records.enabled;
+  const ss = s.records.sync_status;
+  if (s.records.enabled && s.records.sync) {
+    $('rec-sync-status').innerHTML = ss.last_error ? `<span class="err">Not sent: ${esc(ss.last_error)}</span>${ss.waiting ? ` · ${ss.waiting} waiting` : ''}`
+      : ss.last_ok ? `Up to date (last sent ${ago(ss.last_ok * 1000)}${ss.waiting ? `, ${ss.waiting} waiting` : ''})` : 'Starts within a minute.';
+  }
   if (!$('imp-rec-url').value) $('imp-rec-url').value = s.records.url || 'https://records.jplay.cloud';
 }
 function showTest(t) {
@@ -151,6 +160,10 @@ $('rec-off').addEventListener('click', async () => {
   if (!confirm('Disconnect JPlay Records? Plays stay as they are.')) return;
   await api('/api/settings/records', { method: 'PUT', body: { url: '', token: '' } });
   $('rec-result').textContent = ''; loadRecords();
+});
+$('rec-sync').addEventListener('change', async (e) => {
+  try { await api('/api/settings/records/sync', { method: 'PUT', body: { on: e.target.checked } }); loadRecords(); }
+  catch (err) { toast(err.message); }
 });
 $('rematch').addEventListener('click', async () => {
   $('rematch').disabled = true;

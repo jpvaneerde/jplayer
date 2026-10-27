@@ -25,7 +25,7 @@ import re
 import unicodedata
 from typing import Any
 
-from . import db, records
+from . import db, records, records_sync
 from .db import now
 
 log = logging.getLogger(__name__)
@@ -409,8 +409,10 @@ def apply_mic(event_id: str, room: str, ts: int, d: dict) -> None:
     a = attribute([room], ts, artist, title, album)
     if a["kind"] == "streamed" and a["detail"] == "radio":
         # Radio metadata that disagrees with what the microphone heard: drop it.
-        db.run("DELETE FROM plays WHERE room = ? AND confidence = 'metadata' AND detail = 'radio' AND song_key <> ? "
-               "AND started_at BETWEEN ? AND ?", a["room"], key, ts - RADIO_CONFLICT_MS, ts + RADIO_CONFLICT_MS)
+        where = ("room = ? AND confidence = 'metadata' AND detail = 'radio' AND song_key <> ? AND started_at BETWEEN ? AND ?",
+                 a["room"], key, ts - RADIO_CONFLICT_MS, ts + RADIO_CONFLICT_MS)
+        records_sync.forget(db.all(f"SELECT * FROM plays WHERE {where[0]}", *where[1:]))
+        db.run(f"DELETE FROM plays WHERE {where[0]}", *where[1:])
     save_play(None, a, {"start": ts, "heard": [room], "mic_ids": [event_id], "title": title, "artist": artist,
                         "album": album, "cover": cover, "key": key})
 
@@ -562,7 +564,9 @@ def stats(days: int) -> dict:
 
 # ---------------------------------------------------------------- corrections from the Spins page
 def delete_play(play_id: int) -> None:
-    db.run("DELETE FROM plays WHERE id = ?", play_id)
+    with db.tx():
+        records_sync.forget(db.all("SELECT * FROM plays WHERE id = ?", play_id))
+        db.run("DELETE FROM plays WHERE id = ?", play_id)
 
 
 def mark_heard(play_id: int) -> None:
@@ -670,6 +674,7 @@ def merge_duplicates(days: int = 30) -> int:
                         cover = COALESCE(cover, ?), station = COALESCE(station, ?) WHERE id = ?""",
                    artist, song_key(artist, keep["title"]), start, ended, json.dumps(heard), json.dumps(mic_ids),
                    drop["cover"], drop["station"], keep["id"])
+            records_sync.forget([drop])
             db.run("DELETE FROM plays WHERE id = ?", drop["id"])
             keep.update(artist=artist, heard_by=json.dumps(heard), mic_ids=json.dumps(mic_ids), started_at=start)
             kept[kept.index(twin)] = keep

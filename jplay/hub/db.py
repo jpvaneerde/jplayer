@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS plays (
   via          TEXT,                         -- 'player': the room's JPlay player said what it was
   origin       TEXT NOT NULL DEFAULT 'hub',  -- hub | records (imported from JPlay Records) | display (imported history)
   import_id    TEXT,                         -- where an imported play came from (importing twice adds nothing)
+  synced_hash  TEXT,                         -- what JPlay Records last got of this play (see records_sync.py)
   created_at   INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS plays_import ON plays (import_id) WHERE import_id IS NOT NULL;
@@ -96,6 +97,13 @@ CREATE TABLE IF NOT EXISTS room_sessions (
   last_seen_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS room_sessions_room ON room_sessions (room, ended_at);
+
+-- Plays deleted on the hub that JPlay Records still has to delete too
+CREATE TABLE IF NOT EXISTS records_deleted (
+  hub_id      TEXT PRIMARY KEY,
+  records_id  INTEGER,
+  deleted_at  INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS lyrics (
   key           TEXT PRIMARY KEY,              -- normalised "artist|title" (lrclib.cache_key)
@@ -131,6 +139,10 @@ def init(path: str) -> None:
         _conn.execute("PRAGMA journal_mode = WAL")
         _conn.execute("PRAGMA foreign_keys = ON")
         _conn.executescript(SCHEMA)
+        # Columns added after a database was made
+        cols = {r[1] for r in _conn.execute("PRAGMA table_info(plays)")}
+        if "synced_hash" not in cols:
+            _conn.execute("ALTER TABLE plays ADD COLUMN synced_hash TEXT")
 
 
 def close() -> None:
