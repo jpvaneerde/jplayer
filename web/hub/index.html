@@ -111,7 +111,7 @@ async function loadStats() {
       <div class="card stat"><b>${s.physical.spins}</b><span class="muted">records put on</span></div>
       <div class="card stat"><b>${s.physical.vinyl_hours.toFixed(1)}</b><span class="muted">hours of vinyl</span></div>
       <div class="card stat"><b>${s.streamed.tracks}</b><span class="muted">songs streamed</span></div>
-      <div class="card stat"><b>${s.listening_hours.toFixed(0)}</b><span class="muted">hours of radio &amp; streams</span></div>
+      <div class="card stat"><b>${s.listening_hours.toFixed(s.listening_hours < 10 ? 1 : 0)}</b><span class="muted">hours of radio &amp; streams</span></div>
       <div class="card stat"><b>${s.heard.tracks}</b><span class="muted">songs heard</span></div>
     </div>
     <div class="grid" style="margin-top: 10px;">

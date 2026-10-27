@@ -89,7 +89,7 @@ def from_records(url: str, token: str) -> None:
     status["message"] = "Rooms"
     data = _get(f"{url}/api/spins/export", {"part": "rooms"}, token)
     for r in data.get("rooms", []):
-        existing = db.get("SELECT name FROM rooms WHERE name = ?", r["room"])
+        existing = db.get("SELECT name FROM rooms WHERE lower(name) = lower(?)", r["room"])
         if not existing:
             spins.save_room(r["room"], r.get("priority", 1), r.get("formats", []))
             _count("rooms")
@@ -138,6 +138,7 @@ def _abs(url: str, path: str | None) -> str | None:
 
 
 def _store_records_play(url: str, p: dict) -> None:
+    p = {**p, "room": spins.room_name(p["room"])}
     record = p.get("record")
     if record:
         record = {"artist": record.get("artist"), "title": record.get("title"), "year": record.get("year"),
@@ -163,7 +164,7 @@ def _store_records_play(url: str, p: dict) -> None:
 # ---------------------------------------------------------------- an old JPlaying Now's history
 def from_display(address: str, room: str) -> None:
     base = _base(address, 5000)
-    room = room.strip()
+    room = spins.room_name(room)
     if not room:
         raise ImportError_("Say which room that display is in")
     db.run("INSERT OR IGNORE INTO rooms (name) VALUES (?)", room)

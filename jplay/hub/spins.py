@@ -75,6 +75,13 @@ def save_room(name: str, priority: int, formats: list[str], old_name: str | None
                name, priority, json.dumps(formats))
 
 
+def room_name(name: str) -> str:
+    """The room as it is already known ("study" from one display, "Study" from another: one room)."""
+    name = str(name or "").strip()[:40]
+    r = db.get("SELECT name FROM rooms WHERE lower(name) = lower(?)", name)
+    return r["name"] if r else name
+
+
 def delete_room(name: str) -> None:
     db.run("DELETE FROM rooms WHERE name = ?", name)
 
@@ -93,7 +100,7 @@ def forget_unit(unit_id: str) -> None:
 def ingest(unit: dict, events: list, address: str = "") -> int:
     """Events from a display: {"id", "type", "ts", "data"}. Returns how many were new."""
     uid = str(unit.get("id") or "").strip()[:64]
-    room = str(unit.get("room") or "").strip()[:40]
+    room = room_name(str(unit.get("room") or ""))
     if not uid or not room:
         raise ValueError("Say which unit this is and its room")
     t = now()
@@ -308,10 +315,14 @@ def apply_room(room: str, ts: int, d: dict) -> None:
     key = song_key(artist, title)
     if not key:
         return
+    cover = str(d.get("cover") or "") or None
     recent = db.get("SELECT * FROM plays WHERE room = ? AND song_key = ? AND started_at >= ? "
                     "ORDER BY started_at DESC LIMIT 1", room, key, ts - 15 * 60_000)
+    if recent and cover and not recent["cover"]:
+        db.run("UPDATE plays SET cover = ? WHERE id = ?", cover, recent["id"])
     if mode == "cd":
-        player_cd_play(room, ts, recent, {"title": title, "artist": artist, "album": str(d.get("album") or ""), "key": key})
+        player_cd_play(room, ts, recent, {"title": title, "artist": artist, "album": str(d.get("album") or ""), "key": key,
+                                          "cover": cover})
         return
     if recent:
         # A heartbeat repeating the same song, or the microphone already logged it: just confirm.
@@ -323,6 +334,8 @@ def apply_room(room: str, ts: int, d: dict) -> None:
     similar = similar_play(ts, artist, title, 10 * 60_000)
     if similar:
         clean = cleaner_artist(similar["artist"], artist)
+        if cover and not similar["cover"]:
+            db.run("UPDATE plays SET cover = ? WHERE id = ?", cover, similar["id"])
         if similar["room"] == room and similar["confidence"] != "manual" and similar["kind"] != "physical":
             db.run("UPDATE plays SET kind = 'streamed', detail = ?, station = ?, instance_id = NULL, release_id = NULL, "
                    "record = NULL, confidence = ?, artist = ?, song_key = ?, note = NULL WHERE id = ?",
@@ -338,9 +351,9 @@ def apply_room(room: str, ts: int, d: dict) -> None:
                   room, ts - RADIO_CONFLICT_MS, ts + RADIO_CONFLICT_MS):
             return
     end_open_metadata_play(room, ts)
-    db.run("""INSERT INTO plays (room, kind, detail, station, started_at, title, artist, album, song_key, confidence, created_at)
-              VALUES (?, 'streamed', ?, ?, ?, ?, ?, ?, ?, 'metadata', ?)""",
-           room, mode, station or None, ts, title, artist, str(d.get("album") or ""), key, now())
+    db.run("""INSERT INTO plays (room, kind, detail, station, started_at, title, artist, album, cover, song_key, confidence,
+                created_at) VALUES (?, 'streamed', ?, ?, ?, ?, ?, ?, ?, ?, 'metadata', ?)""",
+           room, mode, station or None, ts, title, artist, str(d.get("album") or ""), cover, key, now())
 
 
 def player_cd_play(room: str, ts: int, recent: dict | None, p: dict) -> None:
@@ -359,11 +372,11 @@ def player_cd_play(room: str, ts: int, recent: dict | None, p: dict) -> None:
                m["note"], recent["id"])
         return
     end_open_metadata_play(room, ts)
-    db.run("""INSERT INTO plays (room, kind, detail, started_at, title, artist, album, song_key, instance_id, release_id,
+    db.run("""INSERT INTO plays (room, kind, detail, started_at, title, artist, album, cover, song_key, instance_id, release_id,
                 record, confidence, alternatives, note, via, created_at)
-              VALUES (?, 'physical', 'cd', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'player', ?)""",
-           room, ts, p["title"], p["artist"], p["album"], p["key"], m["instance_id"], m["release_id"], m["record"],
-           m["confidence"] or "metadata", m["alternatives"], m["note"], now())
+              VALUES (?, 'physical', 'cd', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'player', ?)""",
+           room, ts, p["title"], p["artist"], p["album"], p.get("cover"), p["key"], m["instance_id"], m["release_id"],
+           m["record"], m["confidence"] or "metadata", m["alternatives"], m["note"], now())
 
 
 def end_open_metadata_play(room: str, ts: int) -> None:

@@ -156,3 +156,13 @@ def test_merge_duplicates_keeps_one_play(hub):
     assert spins.merge_duplicates() == 1
     (p,) = spins.list_plays()["plays"]
     assert p["artist"] == "Dua Lipa"
+
+
+def test_the_players_song_keeps_its_cover_and_rooms_ignore_capitals(hub):
+    spins.ingest(unit("Study", "u1"), [ev("r1", "room", T0, state="play", mode="plex", title="Rotten Apple",
+                                          artist="Alice in Chains", album="Jar of Flies", cover="http://p:8080/art.jpg")])
+    spins.ingest(unit("study", "u2"), [ev("m1", "mic", T0 + 1000, title="Other", artist="Song")])
+    process()
+    assert [r["name"] for r in spins.rooms()] == ["Study"]
+    p = next(p for p in spins.list_plays()["plays"] if p["title"] == "Rotten Apple")
+    assert p["cover"] == "http://p:8080/art.jpg"

@@ -227,6 +227,8 @@ def spins_room_data(card: dict) -> dict:
         "artist": card.get("artist", "") if known else "",
         "album": card.get("album", "") if known else "",
         "recognised": bool(known and card.get("recognised")),
+        # the song's cover (Shazam, iTunes or the player's own art), for the hub's Spins pages
+        "cover": card.get("coverart", "") if known and str(card.get("coverart", "")).startswith("http") else "",
     }
 
 
