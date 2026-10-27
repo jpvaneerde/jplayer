@@ -79,3 +79,5 @@ th { color: var(--muted); font-size: 0.8em; }
 .roomrow { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .roomrow:last-child { border-bottom: 0; }
 .roomrow .fmts { display: flex; flex-wrap: wrap; gap: 4px 0; }
+header .back { text-decoration: none; font-weight: 700; color: var(--text); background: var(--card2); border: 1px solid var(--line);
+                border-radius: 999px; padding: 6px 12px; margin-right: 10px; white-space: nowrap; }

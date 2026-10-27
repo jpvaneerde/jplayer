@@ -46,6 +46,20 @@ function ago(ms) {
 
 function header(page) {
   const links = [['/', 'Spins'], ['/lyrics', 'Lyrics'], ['/settings', 'Settings']];
-  document.body.insertAdjacentHTML('afterbegin', `<header><div class="brand"><img src="/static/icon.svg" alt="">JPlay hub</div>
+  document.body.insertAdjacentHTML('afterbegin', `<header><a href="#" class="back" id="back-display" hidden>‹ Display</a>
+    <div class="brand"><img src="/static/icon.svg" alt="">JPlay hub</div>
     <nav>${links.map(([h, t]) => `<a href="${h}" class="${h === page ? 'on' : ''}">${t}</a>`).join('')}</nav></header>`);
+  // Back to the display: the one this page was opened from, else the one on this Pi (on the Pi's own screen
+  // there is no browser Back button)
+  const back = $('back-display');
+  let from = null;
+  try { from = sessionStorage.getItem('jplay-display'); } catch (e) { /* no storage: fine */ }
+  const ref = document.referrer && /:5000\//.test(document.referrer) ? new URL(document.referrer).origin + '/' : null;
+  if (ref) { from = ref; try { sessionStorage.setItem('jplay-display', ref); } catch (e) { /* ignore */ } }
+  if (from) { back.href = from; back.hidden = false; }
+  else {
+    api('/api/info').then((i) => {
+      if ((i.roles || []).includes('display')) { back.href = `${location.protocol}//${location.hostname}:5000/`; back.hidden = false; }
+    }).catch(() => {});
+  }
 }

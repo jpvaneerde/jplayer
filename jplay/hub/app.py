@@ -169,7 +169,8 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
     # ------------------------------------------------------------ for the displays
     @app.get("/api/info")
     async def info() -> dict:
-        return {"name": _name(), "version": app_version(), "kind": "hub", "records": records.enabled()}
+        return {"name": _name(), "version": app_version(), "kind": "hub", "records": records.enabled(),
+                "roles": system.roles()}
 
     @app.get("/api/health")
     async def health() -> dict:
