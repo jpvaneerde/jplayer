@@ -1,0 +1,19 @@
+[Unit]
+Description=JPlay hub (the house's plays and lyrics)
+Documentation=https://github.com/jpvaneerde/jplayer
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=jplay
+Group=jplay
+ExecStart=/opt/jplayer/.venv/bin/python -m jplay.hub
+Environment=PYTHONUNBUFFERED=1
+StateDirectory=jplay
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

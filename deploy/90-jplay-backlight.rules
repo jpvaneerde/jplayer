@@ -1,0 +1,2 @@
+# Lets the display app (group video) switch the backlight of a Raspberry Pi touch screen on and off.
+SUBSYSTEM=="backlight", RUN+="/bin/chgrp video /sys%p/bl_power /sys%p/brightness", RUN+="/bin/chmod g+w /sys%p/bl_power /sys%p/brightness"

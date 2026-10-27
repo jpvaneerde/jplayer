@@ -1,0 +1,34 @@
+# The display on the Pi's own screen: cage (a one-window Wayland compositor) running Chromium full screen.
+# No desktop is needed: this runs on Raspberry Pi OS Lite, on the first console (tty1).
+# The display's Settings ("Display locally") switches it on and off.
+[Unit]
+Description=JPlaying Now on the Pi's own screen (cage + Chromium)
+Documentation=https://github.com/jpvaneerde/jplayer
+After=jplay-display.service systemd-user-sessions.service plymouth-quit-wait.service
+Wants=jplay-display.service
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+
+[Service]
+Type=simple
+User=jplay
+# A login session on tty1, so cage may use the screen, keyboard and touch (and gets /run/user/<uid>)
+PAMName=login
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+Environment=WLR_LIBINPUT_NO_DEVICES=1
+# Wait for the display app to answer before opening the browser
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do curl -sf http://127.0.0.1:5000/api/version >/dev/null && exit 0; sleep 1; done; exit 0'
+ExecStart=/usr/bin/cage -d -s -- /bin/sh /opt/jplayer/deploy/chromium-kiosk.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

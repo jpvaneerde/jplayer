@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JPlay Spins</title>
+<link rel="icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/hub.css">
+</head>
+<body>
+<main>
+  <h2>Now</h2>
+  <div class="grid" id="now"><div class="muted">…</div></div>
+
+  <h2>Records you put on</h2>
+  <div class="strip" id="spins"><div class="muted">…</div></div>
+
+  <h2>Plays</h2>
+  <div class="row" style="margin-bottom: 8px;">
+    <div class="tabs" id="kinds">
+      <button data-kind="" class="on">All</button>
+      <button data-kind="physical">Records &amp; CDs</button>
+      <button data-kind="streamed">Streamed</button>
+      <button data-kind="heard">Heard</button>
+    </div>
+    <div class="grow"></div>
+    <select id="room"><option value="">All rooms</option></select>
+    <input id="q" type="search" placeholder="Search" style="width: 150px;">
+  </div>
+  <div class="list" id="plays"></div>
+  <div class="more"><button id="more" hidden>More</button></div>
+
+  <h2>Totals</h2>
+  <div class="tabs" id="periods" style="margin-bottom: 10px;">
+    <button data-days="7">Week</button>
+    <button data-days="30" class="on">Month</button>
+    <button data-days="365">Year</button>
+    <button data-days="0">Ever</button>
+  </div>
+  <div id="stats"></div>
+</main>
+<script src="/static/hub.js"></script>
+<script>
+header('/');
+const KIND = { vinyl: 'Vinyl', cd: 'CD', cassette: 'Cassette', radio: 'Radio', plex: 'Plex', spotify: 'Spotify',
+               bluetooth: 'Bluetooth', file: 'Stream', stream: 'Stream' };
+const state = { kind: '', room: '', q: '', offset: 0, plays: [], total: 0, days: 30, records: false };
+
+function badge(p) {
+  if (p.kind === 'physical') return `<span class="badge k-${esc(p.detail || 'vinyl')}">${esc(KIND[p.detail] || 'Record')}</span>`;
+  if (p.kind === 'streamed') return `<span class="badge k-streamed">${esc(KIND[p.detail] || p.detail || 'Stream')}${p.station ? ' · ' + esc(p.station) : ''}</span>`;
+  return '<span class="badge k-heard">Heard</span>';
+}
+
+function playLine(p, withMenu = true) {
+  const rec = p.record ? `<div class="note">${esc(p.record.artist)} – ${esc(p.record.title)}${p.record.year ? ' (' + p.record.year + ')' : ''}</div>` : '';
+  const note = !p.record && p.note ? `<div class="note">${esc(p.note)}</div>` : '';
+  return `<img class="cover" loading="lazy" src="${esc(coverUrl(p.cover))}" alt="" onerror="this.onerror=null; this.src='/static/icon.svg'">
+    <div class="grow"><div class="title ellipsis">${esc(p.title)}</div>
+      <div class="ellipsis">${esc(p.artist)}${p.album ? ' <span class="muted">· ' + esc(p.album) + '</span>' : ''}</div>
+      <div class="row small" style="gap: 6px; margin-top: 2px;">${badge(p)}<span class="muted">${esc(p.room)}</span></div>${rec}${note}</div>
+    ${withMenu ? `<div class="menu"><button data-menu="${p.id}" aria-label="Change">⋯</button></div>` : ''}`;
+}
+
+async function loadNow() {
+  try {
+    const { rooms } = await api('/api/now');
+    $('now').innerHTML = rooms.length ? rooms.map((r) => {
+      const s = r.session;
+      const what = r.play ? `<div class="row" style="flex-wrap: nowrap;">${playLine(r.play, false)}</div>`
+        : `<div class="muted">${s ? esc(KIND[s.mode] || s.mode) + (s.station ? ' · ' + esc(s.station) : '') + ' since ' + time(s.started_at) : 'Quiet'}</div>`;
+      return `<div class="card"><div class="row" style="margin-bottom: 8px;"><span class="dot ${r.online ? 'on' : ''}"></span>
+        <b>${esc(r.room)}</b><span class="muted small">${r.online ? '' : 'no display reporting'}</span></div>${what}</div>`;
+    }).join('') : '<div class="muted">No rooms yet. A display reports to the hub once it has a room (its Settings → Room &amp; hub).</div>';
+    const sel = $('room'), keep = sel.value;
+    sel.innerHTML = '<option value="">All rooms</option>' + rooms.map((r) => `<option>${esc(r.room)}</option>`).join('');
+    sel.value = keep;
+  } catch (e) { $('now').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+
+async function loadSpins() {
+  const { spins } = await api('/api/spins?limit=24');
+  $('spins').innerHTML = spins.length ? spins.map((s) => `<div class="spin" title="${esc(s.record.artist)} – ${esc(s.record.title)}">
+      <img loading="lazy" src="${esc(coverUrl(s.record.cover))}" alt="" onerror="this.onerror=null; this.src='/static/icon.svg'">
+      <div class="small title ellipsis" style="margin-top: 4px;">${esc(s.record.title || s.record.artist)}</div>
+      <div class="small muted ellipsis">${esc(s.record.artist)}</div>
+      <div class="small muted">${dayLabel(s.started_at)} · ${s.tracks} track${s.tracks === 1 ? '' : 's'}</div></div>`).join('')
+    : '<div class="muted">Nothing yet. Records and CDs show up here once they are played.</div>';
+}
+
+async function loadPlays(append = false) {
+  if (!append) state.offset = 0;
+  const p = new URLSearchParams({ kind: state.kind, room: state.room, q: state.q, limit: 60, offset: state.offset });
+  const data = await api('/api/plays?' + p);
+  state.plays = append ? state.plays.concat(data.plays) : data.plays;
+  state.total = data.total;
+  let html = '', day = '';
+  for (const pl of state.plays) {
+    const d = dayLabel(pl.started_at);
+    if (d !== day) { html += `<div class="day">${esc(d)}</div>`; day = d; }
+    html += `<div class="item"><div class="when">${time(pl.started_at)}</div>${playLine(pl)}</div>`;
+  }
+  $('plays').innerHTML = html || '<div class="muted" style="padding: 10px 0;">No plays.</div>';
+  $('more').hidden = state.plays.length >= state.total;
+}
+
+async function loadStats() {
+  const s = await api('/api/stats?days=' + state.days);
+  const list = (rows, f) => rows.length ? rows.map(f).join('') : '<div class="muted small">—</div>';
+  $('stats').innerHTML = `<div class="stats">
+      <div class="card stat"><b>${s.physical.spins}</b><span class="muted">records put on</span></div>
+      <div class="card stat"><b>${s.physical.vinyl_hours.toFixed(1)}</b><span class="muted">hours of vinyl</span></div>
+      <div class="card stat"><b>${s.streamed.tracks}</b><span class="muted">songs streamed</span></div>
+      <div class="card stat"><b>${s.listening_hours.toFixed(0)}</b><span class="muted">hours of radio &amp; streams</span></div>
+      <div class="card stat"><b>${s.heard.tracks}</b><span class="muted">songs heard</span></div>
+    </div>
+    <div class="grid" style="margin-top: 10px;">
+      <div class="card"><b>Artists</b>${list(s.top_artists, (a) => `<div class="row small"><span class="grow ellipsis">${esc(a.artist)}</span><span class="muted">${a.n}</span></div>`)}</div>
+      <div class="card"><b>Records</b>${list(s.top_records, (r) => `<div class="row small"><span class="grow ellipsis">${esc(r.artist)} – ${esc(r.title)}</span><span class="muted">${r.spins}×</span></div>`)}</div>
+      <div class="card"><b>Radio</b>${list(s.radio, (r) => `<div class="row small"><span class="grow ellipsis">${esc(r.station)} <span class="muted">· ${esc(r.room)}</span></span><span class="muted">${r.hours.toFixed(1)} h</span></div>`)}</div>
+    </div>`;
+}
+
+// ---- corrections
+let openMenu = null;
+function closeMenu() { if (openMenu) { openMenu.remove(); openMenu = null; } }
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-menu]');
+  const act = e.target.closest('[data-act]');
+  if (act) {
+    e.stopPropagation();
+    const id = act.dataset.id, a = act.dataset.act;
+    closeMenu();
+    try {
+      if (a === 'delete') {
+        if (!confirm('Delete this play?')) return;
+        await api(`/api/plays/${id}`, { method: 'DELETE' });
+      } else {
+        const body = a === 'heard' ? { heard: true } : a === 'auto' ? { auto: true }
+          : a.startsWith('copy:') ? { record: Number(a.slice(5)) } : { physical: a };
+        await api(`/api/plays/${id}`, { method: 'PUT', body });
+      }
+      toast('Saved');
+      await Promise.all([loadPlays(), loadSpins(), loadStats()]);
+    } catch (err) { toast(err.message); }
+    return;
+  }
+  if (!b) { if (!e.target.closest('.menu > div')) closeMenu(); return; }
+  e.stopPropagation();
+  const had = openMenu && openMenu.parentElement === b.parentElement;
+  closeMenu();
+  if (had) return;
+  const p = state.plays.find((x) => String(x.id) === b.dataset.menu);
+  if (!p) return;
+  const alts = (p.alternatives || []).map((a) => `<button data-act="copy:${a.id}" data-id="${p.id}">${esc(a.artist)} – ${esc(a.title)} <span class="muted">(${esc(KIND[a.medium] || a.medium)})</span></button>`).join('');
+  const div = document.createElement('div');
+  div.innerHTML = (p.kind !== 'heard' ? `<button data-act="heard" data-id="${p.id}">Not one of my records</button>` : '')
+    + (p.kind !== 'physical' || p.detail !== 'vinyl' ? `<button data-act="vinyl" data-id="${p.id}">It was a record</button>` : '')
+    + (p.kind !== 'physical' || p.detail !== 'cd' ? `<button data-act="cd" data-id="${p.id}">It was a CD</button>` : '')
+    + (alts ? `<div class="label">It was this copy</div>${alts}` : '')
+    + (p.confidence === 'manual' && p.kind !== 'streamed' ? `<button data-act="auto" data-id="${p.id}">Undo my correction</button>` : '')
+    + `<button data-act="delete" data-id="${p.id}" class="danger">Delete</button>`;
+  b.parentElement.append(div);
+  openMenu = div;
+});
+
+$('kinds').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  state.kind = b.dataset.kind;
+  for (const x of $('kinds').children) x.classList.toggle('on', x === b);
+  loadPlays();
+});
+$('periods').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  state.days = Number(b.dataset.days);
+  for (const x of $('periods').children) x.classList.toggle('on', x === b);
+  loadStats();
+});
+$('room').addEventListener('change', (e) => { state.room = e.target.value; loadPlays(); });
+let typing;
+$('q').addEventListener('input', (e) => { clearTimeout(typing); typing = setTimeout(() => { state.q = e.target.value.trim(); loadPlays(); }, 300); });
+$('more').addEventListener('click', () => { state.offset = state.plays.length; loadPlays(true); });
+
+loadNow(); loadSpins(); loadPlays(); loadStats();
+setInterval(loadNow, 15000);
+setInterval(() => { if (!openMenu && !state.offset && document.visibilityState === 'visible') loadPlays(); }, 60000);
+</script>
+</body>
+</html>

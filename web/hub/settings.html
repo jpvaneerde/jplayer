@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings · JPlay hub</title>
+<link rel="icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/hub.css">
+</head>
+<body>
+<main>
+  <h2>Rooms</h2>
+  <div class="card">
+    <p class="muted small" style="margin-top: 0;">When several rooms hear the same song, it counts for the room with the highest
+      priority. A record or CD only counts in a room where a turntable or CD player stands (and only when JPlay Records
+      is connected, below). Rooms appear here when a display reports from them.</p>
+    <div id="rooms"></div>
+  </div>
+
+  <h2>Displays reporting here</h2>
+  <div class="card"><table><thead><tr><th></th><th>Display</th><th>Room</th><th>Version</th><th>Last report</th><th></th></tr></thead>
+    <tbody id="units"></tbody></table></div>
+
+  <h2>JPlay Records (optional)</h2>
+  <div class="card">
+    <p class="muted small" style="margin-top: 0;">Connect your JPlay Records to see which of your records or CDs was played
+      (otherwise the hub still keeps every play, but a record is just "heard" and a CD is "a CD"). Create a listener for
+      the hub in JPlay Records → Settings → Listeners and paste its token.</p>
+    <label for="rec-url">Address</label>
+    <input id="rec-url" placeholder="https://records.jplay.cloud" style="width: 100%;">
+    <label for="rec-token">Listener token</label>
+    <input id="rec-token" type="password" autocomplete="off" style="width: 100%;">
+    <div class="row" style="margin-top: 10px;">
+      <button class="primary" id="rec-save">Save</button>
+      <button id="rec-test">Test</button>
+      <button id="rec-off" class="danger">Disconnect</button>
+      <span id="rec-result" class="small"></span>
+    </div>
+    <div class="row" style="margin-top: 10px;">
+      <button id="rematch">Match plays to my records again</button>
+      <span class="muted small">Done by itself every few hours; use this after adding records.</span>
+    </div>
+  </div>
+
+  <h2>Import</h2>
+  <div class="card">
+    <p class="muted small" style="margin-top: 0;">Bring in what the old setup knew. Each import can run again: what's already
+      here is skipped.</p>
+    <b>From JPlay Records</b>
+    <div class="muted small">Its plays (with your records), rooms and lyrics. Also connects it for matching (above), if it isn't yet.</div>
+    <div class="row" style="margin-top: 6px;">
+      <input id="imp-rec-url" placeholder="https://records.jplay.cloud" class="grow">
+      <input id="imp-rec-token" type="password" placeholder="Listener token" class="grow">
+      <button data-import="records">Import</button>
+    </div>
+    <hr style="border: 0; border-top: 1px solid var(--line); margin: 16px 0;">
+    <b>From an old JPlaying Now</b>
+    <div class="muted small">The songs its microphone heard (its History), for plays JPlay Records never got.</div>
+    <div class="row" style="margin-top: 6px;">
+      <input id="imp-disp-addr" placeholder="Address, e.g. 192.168.1.30" class="grow">
+      <input id="imp-disp-room" placeholder="Its room, e.g. Lounge" class="grow">
+      <button data-import="display">Import</button>
+    </div>
+    <hr style="border: 0; border-top: 1px solid var(--line); margin: 16px 0;">
+    <b>Radio favourites</b>
+    <div class="muted small">Copy one player's favourites to another (also from an old player-jplay).</div>
+    <div class="row" style="margin-top: 6px;">
+      <input id="imp-fav-from" placeholder="From, e.g. 192.168.1.222" class="grow">
+      <input id="imp-fav-to" placeholder="To, e.g. jplaystudy.local" class="grow">
+      <button data-import="favourites">Copy</button>
+    </div>
+    <div id="imp-status" class="small" style="margin-top: 12px;"></div>
+  </div>
+
+  <h2>Version &amp; updates</h2>
+  <div class="card">
+    <div class="row"><b id="upd-version">…</b><span id="upd-badge" class="badge"></span></div>
+    <div class="muted small" id="upd-summary"></div>
+    <pre class="small muted" id="upd-notes" hidden style="white-space: pre-wrap;"></pre>
+    <div class="row" style="margin-top: 10px;">
+      <button class="primary" id="upd-install" hidden>Update</button>
+      <button id="upd-check">Check now</button>
+    </div>
+    <label for="upd-channel">Updates from</label>
+    <select id="upd-channel"><option value="releases">Releases (tagged versions)</option><option value="main">Newest commit on GitHub (for development)</option></select>
+    <label class="check" style="margin-top: 10px;"><input type="checkbox" id="upd-auto"> Install updates automatically at night (03:00–05:00, when nothing plays)</label>
+    <p class="muted small">One version for everything on this Pi (player, display, hub). An update restarts them; if one
+      doesn't start afterwards, the previous version comes back by itself.</p>
+  </div>
+</main>
+<script src="/static/hub.js"></script>
+<script>
+header('/settings');
+const FORMATS = [['vinyl', 'Records'], ['cd', 'CDs'], ['cassette', 'Cassettes']];
+
+async function loadRooms() {
+  const { rooms, units } = await api('/api/rooms');
+  $('rooms').innerHTML = rooms.map((r) => `<div class="roomrow" data-room="${esc(r.name)}">
+      <input value="${esc(r.name)}" data-f="name" aria-label="Room" style="width: 10em;">
+      <span class="muted small">priority</span><input type="number" min="0" max="100" value="${r.priority}" data-f="priority" aria-label="Priority" style="width: 4.5em;">
+      <span class="fmts"><span class="muted small" style="margin-right: 8px;">plays</span>${FORMATS.map(([f, t]) => `<label class="check"><input type="checkbox" data-format="${f}" ${r.formats.includes(f) ? 'checked' : ''}>${t}</label>`).join('')}</span>
+      <span class="grow"></span><span style="white-space: nowrap;"><button data-save>Save</button> <button data-delete class="danger" title="Remove (its plays stay)">✕</button></span></div>`).join('')
+    || '<div class="muted">No rooms yet.</div>';
+  $('units').innerHTML = units.map((u) => `<tr><td><span class="dot ${u.online ? 'on' : ''}"></span></td>
+      <td>${u.address ? `<a href="http://${esc(u.address)}:5000/">${esc(u.name)}</a>` : esc(u.name)}</td><td>${esc(u.room)}</td>
+      <td class="muted">${esc(u.version)}</td><td class="muted">${ago(u.last_seen_at)}</td>
+      <td><button data-forget="${esc(u.id)}" class="danger" title="Forget">✕</button></td></tr>`).join('')
+    || '<tr><td colspan="6" class="muted">None yet. On a display: Settings → Room &amp; hub, give it a room.</td></tr>';
+}
+
+$('rooms').addEventListener('click', async (e) => {
+  const tr = e.target.closest('[data-room]'); if (!tr) return;
+  try {
+    if (e.target.closest('[data-save]')) {
+      await api('/api/rooms', { method: 'PUT', body: {
+        old_name: tr.dataset.room, name: tr.querySelector('[data-f=name]').value.trim(),
+        priority: Number(tr.querySelector('[data-f=priority]').value) || 0,
+        formats: [...tr.querySelectorAll('[data-format]:checked')].map((x) => x.dataset.format) } });
+      toast('Saved'); loadRooms();
+    } else if (e.target.closest('[data-delete]')) {
+      if (!confirm(`Remove ${tr.dataset.room}? Its plays stay; it comes back when a display reports from it.`)) return;
+      await api('/api/rooms/' + encodeURIComponent(tr.dataset.room), { method: 'DELETE' }); loadRooms();
+    }
+  } catch (err) { toast(err.message); }
+});
+$('units').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-forget]'); if (!b) return;
+  await api('/api/units/' + encodeURIComponent(b.dataset.forget), { method: 'DELETE' }); loadRooms();
+});
+
+// ---- JPlay Records
+async function loadRecords() {
+  const s = await api('/api/settings');
+  $('rec-url').value = s.records.url;
+  $('rec-token').placeholder = s.records.token_set ? 'Saved (leave empty to keep it)' : 'Paste the token';
+  $('rec-off').hidden = !s.records.enabled;
+  $('rematch').disabled = !s.records.enabled;
+  if (!$('imp-rec-url').value) $('imp-rec-url').value = s.records.url || 'https://records.jplay.cloud';
+}
+function showTest(t) {
+  $('rec-result').innerHTML = t.ok ? '<span class="ok">Connected</span>' : `<span class="err">${esc(t.error)}</span>`;
+}
+$('rec-save').addEventListener('click', async () => {
+  const token = $('rec-token').value.trim();
+  const s = await api('/api/settings/records', { method: 'PUT', body: { url: $('rec-url').value.trim(), token: token || null } });
+  $('rec-token').value = '';
+  showTest(s.test); loadRecords();
+});
+$('rec-test').addEventListener('click', async () => showTest(await api('/api/settings/records/test', { method: 'POST' })));
+$('rec-off').addEventListener('click', async () => {
+  if (!confirm('Disconnect JPlay Records? Plays stay as they are.')) return;
+  await api('/api/settings/records', { method: 'PUT', body: { url: '', token: '' } });
+  $('rec-result').textContent = ''; loadRecords();
+});
+$('rematch').addEventListener('click', async () => {
+  $('rematch').disabled = true;
+  try { const r = await api('/api/rematch', { method: 'POST' }); toast(`${r.changed} plays changed`); }
+  catch (e) { toast(e.message); }
+  $('rematch').disabled = false;
+});
+
+// ---- import
+async function importStatus() {
+  const s = await api('/api/import');
+  const counts = Object.entries(s.counts || {}).map(([k, v]) => `${v} ${k}`).join(', ');
+  $('imp-status').innerHTML = !s.what ? '' : s.running ? `Importing (${esc(s.what)}): ${esc(s.message)}${counts ? ' · ' + esc(counts) : ''}`
+    : s.error ? `<span class="err">Import failed: ${esc(s.error)}</span>${counts ? ' · ' + esc(counts) : ''}`
+    : `<span class="ok">Import done</span>: ${esc(counts || 'nothing new')}`;
+  for (const b of document.querySelectorAll('[data-import]')) b.disabled = s.running;
+  if (s.running) setTimeout(importStatus, 1000);
+  else if (s.what) loadRooms();
+}
+document.querySelectorAll('[data-import]').forEach((b) => b.addEventListener('click', async () => {
+  const what = b.dataset.import;
+  const body = what === 'records' ? { url: $('imp-rec-url').value.trim(), token: $('imp-rec-token').value.trim() }
+    : what === 'display' ? { address: $('imp-disp-addr').value.trim(), room: $('imp-disp-room').value.trim() }
+    : { source: $('imp-fav-from').value.trim(), target: $('imp-fav-to').value.trim() };
+  if (Object.values(body).some((v) => !v)) { toast('Fill in both fields'); return; }
+  try { await api('/api/import/' + what, { method: 'POST', body }); importStatus(); }
+  catch (e) { toast(e.message); }
+}));
+
+// ---- updates
+let upd = null, fastUntil = 0, updTimer;
+async function loadUpdate() {
+  try { upd = await api('/api/update'); } catch (e) { clearTimeout(updTimer); updTimer = setTimeout(loadUpdate, 30000); return; }
+  $('upd-version').textContent = 'Version ' + upd.version;
+  const badge = $('upd-badge');
+  badge.textContent = upd.in_progress ? (upd.state === 'checking' ? 'checking…' : 'updating…')
+    : upd.available ? `${upd.latest} available` : !upd.supported ? 'updater not set up' : 'up to date';
+  badge.className = 'badge ' + (upd.available ? 'k-vinyl' : 'k-heard');
+  $('upd-summary').textContent = [upd.message, upd.checked_at ? 'Last checked ' + ago(upd.checked_at * 1000) : ''].filter(Boolean).join(' · ');
+  $('upd-notes').hidden = !upd.notes; $('upd-notes').textContent = upd.notes || '';
+  $('upd-install').hidden = !upd.available || upd.in_progress || !upd.supported;
+  $('upd-check').disabled = upd.in_progress || !upd.supported;
+  $('upd-channel').value = upd.channel; $('upd-auto').checked = upd.auto === 'night';
+  clearTimeout(updTimer);
+  updTimer = setTimeout(loadUpdate, upd.in_progress || Date.now() < fastUntil ? 2000 : 30000);
+}
+async function updPost(path, body) {
+  try { await api(path, { method: 'POST', body: body || {} }); fastUntil = Date.now() + 60000; loadUpdate(); }
+  catch (e) { toast(e.message); }
+}
+$('upd-check').addEventListener('click', () => updPost('/api/update/check'));
+$('upd-install').addEventListener('click', () => {
+  if (confirm(`Update this Pi to ${upd.latest}? Player, display and hub restart for a few seconds.`)) updPost('/api/update/install', { target: upd.target });
+});
+const saveUpd = async () => { await api('/api/update/settings', { method: 'PUT', body: { channel: $('upd-channel').value, auto: $('upd-auto').checked ? 'night' : 'off' } }); loadUpdate(); };
+$('upd-channel').addEventListener('change', saveUpd);
+$('upd-auto').addEventListener('change', saveUpd);
+
+loadRooms(); loadRecords(); importStatus(); loadUpdate();
+</script>
+</body>
+</html>

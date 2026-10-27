@@ -1,0 +1,3 @@
+# Keep Unix line endings so the Pi can run the scripts and units as checked out.
+* text=auto eol=lf
+*.woff2 binary

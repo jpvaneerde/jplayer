@@ -1,0 +1,47 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Add a JPlay device",
+        "menu_options": {
+          "player": "JPlay player",
+          "jplayingnow": "JPlaying Now display"
+        }
+      },
+      "player": {
+        "title": "JPlay player",
+        "description": "The address of the Raspberry Pi running JPlay. Players on your network usually show up by themselves.",
+        "data": {
+          "host": "Host or IP address",
+          "port": "Port"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "JPlay player found",
+        "description": "Add the JPlay player **{name}** ({host})?"
+      },
+      "jplayingnow": {
+        "title": "JPlaying Now display",
+        "description": "The address of the JPlaying Now Pi. Displays (version 2 and later) usually show up by themselves.",
+        "data": {
+          "name": "Name",
+          "host": "Host or IP address",
+          "port": "Port"
+        }
+      },
+      "zeroconf_confirm_display": {
+        "title": "JPlaying Now display found",
+        "description": "Add the JPlaying Now display **{name}** ({host})?"
+      }
+    },
+    "error": {
+      "cannot_connect": "Can't reach a JPlay player there. Check the address and that JPlay runs (port 8080).",
+      "cannot_connect_now": "Can't reach JPlaying Now there, or it is an older version without Home Assistant support (update it first)."
+    },
+    "abort": {
+      "already_configured": "This device is already added.",
+      "cannot_connect": "Can't reach the player."
+    }
+  }
+}

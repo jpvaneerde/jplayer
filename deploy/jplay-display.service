@@ -1,0 +1,21 @@
+[Unit]
+Description=JPlaying Now display
+Documentation=https://github.com/jpvaneerde/jplayer
+Wants=network-online.target
+After=network-online.target sound.target
+
+[Service]
+Type=simple
+User=jplay
+Group=jplay
+# audio: the microphone; input: a touch wakes the screen; video: the screen's backlight
+SupplementaryGroups=audio input video
+ExecStart=/opt/jplayer/.venv/bin/python -m jplay.display
+Environment=PYTHONUNBUFFERED=1
+StateDirectory=jplay
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

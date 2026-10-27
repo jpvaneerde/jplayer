@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lyrics · JPlay hub</title>
+<link rel="icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/hub.css">
+</head>
+<body>
+<main>
+  <h2>Lyrics</h2>
+  <p class="muted small" id="summary">…</p>
+  <div class="row" style="margin-bottom: 8px;">
+    <div class="tabs" id="only">
+      <button data-only="" class="on">All</button>
+      <button data-only="missing">Not found</button>
+      <button data-only="plain">Without timing</button>
+      <button data-only="corrected">Corrected</button>
+    </div>
+    <div class="grow"></div>
+    <input id="q" type="search" placeholder="Search" style="width: 170px;">
+  </div>
+  <div class="list" id="songs"></div>
+  <div class="more"><button id="more" hidden>More</button></div>
+
+  <div class="card" id="editor" hidden style="margin-top: 16px;">
+    <div class="row"><div class="grow"><div class="title" id="ed-title"></div><div class="muted" id="ed-artist"></div></div>
+      <button id="ed-close">Close</button></div>
+    <label>Timing</label>
+    <div class="row">
+      <button data-shift="-1">−1 s</button><button data-shift="-0.25">−¼ s</button>
+      <b id="ed-offset" style="min-width: 70px; text-align: center;">0 s</b>
+      <button data-shift="0.25">+¼ s</button><button data-shift="1">+1 s</button>
+      <span class="muted small">+ shows each line later, − earlier. On every display at once.</span>
+    </div>
+    <label>Lyrics</label>
+    <div class="lyrics-lines card" id="ed-lines"></div>
+    <label>Paste lyrics (LRC with times like <code>[01:02.50] line</code>, or plain text)</label>
+    <textarea id="ed-text" placeholder="[00:12.30] First line&#10;[00:15.80] Second line"></textarea>
+    <div class="row" style="margin-top: 10px;">
+      <button class="primary" id="ed-save">Save lyrics</button>
+      <button id="ed-again">Look up on LRCLIB again</button>
+    </div>
+  </div>
+</main>
+<script src="/static/hub.js"></script>
+<script>
+header('/lyrics');
+const st = { only: '', q: '', offset: 0, songs: [], total: 0, key: null, song: null };
+
+async function load(append = false) {
+  if (!append) st.offset = 0;
+  const data = await api('/api/lyrics/songs?' + new URLSearchParams({ only: st.only, q: st.q, limit: 100, offset: st.offset }));
+  st.songs = append ? st.songs.concat(data.songs) : data.songs;
+  st.total = data.total;
+  const s = data.stats;
+  $('summary').textContent = `${s.songs} songs asked for by the displays: ${s.found} with lyrics, ${s.synced} of them in time with the music. ` +
+    'A song is looked up on LRCLIB once, the first time it plays; a song without lyrics is tried again after three days.';
+  $('songs').innerHTML = st.songs.map((x) => `<div class="item" data-key="${esc(x.key)}" style="cursor: pointer;">
+      <div class="grow"><div class="title ellipsis">${esc(x.title)}</div><div class="muted ellipsis">${esc(x.artist)}${x.album ? ' · ' + esc(x.album) : ''}</div></div>
+      <div class="small" style="text-align: right;">
+        ${x.found ? (x.synced ? '<span class="ok">in time</span>' : '<span>text only</span>') : x.instrumental ? '<span class="muted">instrumental</span>' : '<span class="err">not found</span>'}
+        ${x.offset ? `<br><span class="muted">${x.offset > 0 ? '+' : ''}${x.offset} s</span>` : ''}${x.source === 'manual' ? '<br><span class="muted">by hand</span>' : ''}
+        <br><span class="muted">${x.asked_count}× · ${x.last_asked_at ? ago(x.last_asked_at) : ''}</span></div></div>`).join('')
+    || '<div class="muted" style="padding: 10px 0;">Nothing here.</div>';
+  $('more').hidden = st.songs.length >= st.total;
+}
+
+async function open(key) {
+  st.key = key;
+  st.song = await api('/api/lyrics/song?key=' + encodeURIComponent(key));
+  show();
+  $('editor').hidden = false;
+  $('editor').scrollIntoView({ behavior: 'smooth' });
+}
+
+function show() {
+  const s = st.song;
+  $('ed-title').textContent = s.title;
+  $('ed-artist').textContent = s.artist + (s.album ? ' · ' + s.album : '');
+  $('ed-offset').textContent = `${s.offset > 0 ? '+' : ''}${s.offset} s`;
+  const fmt = (t) => `${String(Math.floor(t / 60)).padStart(2, '0')}:${(t % 60).toFixed(2).padStart(5, '0')}`;
+  $('ed-lines').innerHTML = s.synced ? s.synced.map(([t, l]) => `<div><span>${fmt(t)}</span>${esc(l)}</div>`).join('')
+    : s.plain ? s.plain.map((l) => `<div>${esc(l) || '&nbsp;'}</div>`).join('') : '<div class="muted">No lyrics.</div>';
+  $('ed-text').value = s.synced ? s.synced.map(([t, l]) => `[${fmt(t)}] ${l}`).join('\n') : (s.plain || []).join('\n');
+}
+
+$('songs').addEventListener('click', (e) => { const it = e.target.closest('[data-key]'); if (it) open(it.dataset.key); });
+$('ed-close').addEventListener('click', () => { $('editor').hidden = true; });
+for (const b of document.querySelectorAll('[data-shift]')) {
+  b.addEventListener('click', async () => {
+    const offset = Math.round((st.song.offset + Number(b.dataset.shift)) * 100) / 100;
+    st.song = await api('/api/lyrics/song?key=' + encodeURIComponent(st.key), { method: 'PUT', body: { offset } });
+    show(); load();
+  });
+}
+$('ed-save').addEventListener('click', async () => {
+  try {
+    st.song = await api('/api/lyrics/song?key=' + encodeURIComponent(st.key), { method: 'PUT', body: { text: $('ed-text').value } });
+    show(); load(); toast('Saved: every display uses these lyrics now');
+  } catch (e) { toast(e.message); }
+});
+$('ed-again').addEventListener('click', async () => {
+  if (!confirm('Forget these lyrics (and their timing) and look the song up on LRCLIB again the next time it plays?')) return;
+  await api('/api/lyrics/song?key=' + encodeURIComponent(st.key), { method: 'DELETE' });
+  $('editor').hidden = true; load(); toast('Looked up again the next time it plays');
+});
+$('only').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  st.only = b.dataset.only;
+  for (const x of $('only').children) x.classList.toggle('on', x === b);
+  load();
+});
+let typing;
+$('q').addEventListener('input', (e) => { clearTimeout(typing); typing = setTimeout(() => { st.q = e.target.value.trim(); load(); }, 300); });
+$('more').addEventListener('click', () => { st.offset = st.songs.length; load(true); });
+load();
+</script>
+</body>
+</html>

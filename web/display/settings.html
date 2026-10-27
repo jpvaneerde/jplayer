@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="/static/icons/favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="/static/icons/icon-192.png" sizes="192x192" type="image/png">
+    <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0f111a">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="JPlaying Now">
+    <title>Server Settings</title>
+    <style>
+        body { background: #111827; color: #fff; font-family: system-ui, sans-serif; padding: 30px; max-width: 600px; margin: 0 auto; }
+        .card { background: #1f2937; padding: 20px; border-radius: 12px; margin-bottom: 20px; }
+        label { display: block; margin: 10px 0 5px; font-weight: bold; }
+        input[type="text"], input[type="number"], select { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #374151; background: #111827; color: #fff; box-sizing: border-box; }
+        .row { display: flex; gap: 10px; margin-bottom: 10px; }
+        .btn { background: #10b981; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; }
+        .btn-add { background: #3b82f6; margin-top: 10px; width: auto; }
+        .btn-danger { background: #ef4444; width: 48%; }
+        .btn-warning { background: #f59e0b; width: 48%; }
+        .power-controls { display: flex; justify-content: space-between; gap: 10px; margin-top: 10px; }
+        a { color: #9ca3af; text-decoration: none; display: inline-block; margin-bottom: 15px; }
+        .checkbox-label { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+        .checkbox-label input { width: 18px; height: 18px; }
+        .upd-line { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+        .upd-version { font-size: 1.4rem; font-weight: 800; }
+        .upd-badge { font-size: 0.8rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: #374151; color: #d1d5db; }
+        .upd-badge.new { background: #065f46; color: #6ee7b7; }
+        .upd-badge.bad { background: #7f1d1d; color: #fca5a5; }
+        .upd-notes { white-space: pre-wrap; font-size: 0.85rem; color: #d1d5db; background: #111827; border-radius: 8px; padding: 10px; margin-top: 10px; max-height: 220px; overflow: auto; }
+        .upd-log { font-family: monospace; font-size: 0.72rem; color: #9ca3af; margin-top: 8px; white-space: pre-wrap; }
+        .upd-buttons { display: flex; gap: 10px; margin-top: 12px; }
+        .upd-buttons .btn { width: auto; }
+        .muted { color: #9ca3af; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+    <a href="/">← Back to Display</a> &nbsp; <a href="/history">History</a>
+    <h1>System & App Settings</h1>
+    {% if error %}
+    <div class="card" style="border: 1px solid #dc2626; color: #fca5a5; font-size: 0.8rem; word-break: break-word; white-space: pre-wrap; font-family: monospace;">
+        {{ error }}
+    </div>
+    {% endif %}
+    <form action="/settings/save" method="post">
+        <div class="card" id="updates">
+            <h3 style="margin-top: 0;">Version &amp; updates</h3>
+            <div class="upd-line">
+                <span class="upd-version" id="upd-version">…</span>
+                <span class="upd-badge" id="upd-badge">checking…</span>
+            </div>
+            <div class="muted" id="upd-summary"></div>
+            <div class="upd-notes" id="upd-notes" hidden></div>
+            <div class="upd-buttons">
+                <button type="button" class="btn" id="upd-install" hidden>Update</button>
+                <button type="button" class="btn btn-add" id="upd-check" style="margin-top: 0;">Check now</button>
+            </div>
+            <div class="upd-log" id="upd-log" hidden></div>
+            <label for="update_channel" style="margin-top: 16px;">Updates from</label>
+            <select id="update_channel" name="update_channel">
+                <option value="releases" {% if update_settings.channel != 'main' %}selected{% endif %}>Releases (tagged versions)</option>
+                <option value="main" {% if update_settings.channel == 'main' %}selected{% endif %}>Newest commit on GitHub (for development)</option>
+            </select>
+            <label class="checkbox-label" style="margin-top: 12px; font-weight: normal;">
+                <input type="checkbox" name="update_auto" value="night" {% if update_settings.auto == 'night' %}checked{% endif %}>
+                Install updates automatically at night (03:00–05:00, when nothing plays)
+            </label>
+            <p class="muted" style="margin: 8px 0 0;">One version for everything on this Pi (player, display, hub): an update
+                restarts them (a few seconds). If one doesn't start afterwards, the previous version comes back by itself.</p>
+        </div>
+        <div class="card">
+            <h3>System & Screen Options</h3>
+            <label class="checkbox-label">
+                <input type="checkbox" name="local_kiosk" {% if system.kiosk_active %}checked{% endif %}>
+                Display locally on HDMI / Ribbon Display (Kiosk Mode)
+            </label>
+            <label style="margin-top: 15px;">Screen Orientation / Rotation</label>
+            <select name="screen_rotation">
+                <option value="normal" {% if config.screen_rotation == 'normal' %}selected{% endif %}>Normal (0°)</option>
+                <option value="right" {% if config.screen_rotation == 'right' %}selected{% endif %}>Rotate 90° Clockwise (Portrait)</option>
+                <option value="inverted" {% if config.screen_rotation == 'inverted' %}selected{% endif %}>Rotate 180° (Upside Down)</option>
+                <option value="left" {% if config.screen_rotation == 'left' %}selected{% endif %}>Rotate 270° Counter-Clockwise</option>
+            </select>
+            <label style="margin-top: 15px;">Turn the screen off after no music is detected for (minutes, 0 = never)</label>
+            <input type="number" name="screen_off_minutes" min="0" max="1440" value="{{ config.screen_off_minutes }}">
+            <label class="checkbox-label" style="margin-top: 10px;">
+                <input type="checkbox" name="screen_wake_on_song" {% if config.screen_wake_on_song %}checked{% endif %}>
+                Turn the screen on automatically when the Ambient Listener detects a song
+            </label>
+            <p style="font-size: 0.8rem; color: #9ca3af; margin: 6px 0 0;">
+                Applies only while the local display (Kiosk Mode) is active and the microphone is enabled.
+                Touching the screen or pressing a key wakes it and restarts the countdown.
+            </p>
+            <hr style="border: 0; border-top: 1px solid #374151; margin: 20px 0;">
+            {% if is_local %}
+            <label class="checkbox-label">
+                <input type="checkbox" name="ssh_enabled" {% if system.ssh_active %}checked{% endif %}>
+                Enable Remote SSH Access
+            </label>
+            {% else %}
+            <p style="font-size: 0.85rem; color: #9ca3af; margin: 0;">
+                SSH: {{ "enabled" if system.ssh_active else "disabled" }}. Reboot, shutdown and SSH can only be changed from the Pi's own screen.
+            </p>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <h3>Visual Customization</h3>
+            <label>Theme</label>
+            <select name="theme">
+                <option value="dark" {% if config.theme == 'dark' %}selected{% endif %}>Dark</option>
+                <option value="light" {% if config.theme == 'light' %}selected{% endif %}>Light</option>
+                <option value="retro" {% if config.theme == 'retro' %}selected{% endif %}>Retro Amber</option>
+            </select>
+        </div>
+
+        <div class="card">
+            <h3>Ambient Listening (CD Detection)</h3>
+            <label class="checkbox-label">
+                <input type="checkbox" name="mic_enabled" {% if config.mic_enabled %}checked{% endif %}>
+                Enable Microphone Listener
+            </label>
+            <label>Microphone</label>
+            <select name="mic_device">
+                <option value="{{ mic_default }}" {% if mic_selected == mic_default %}selected{% endif %}>System default input</option>
+                {% set ns = namespace(found=(mic_selected == mic_default)) %}
+                {% for m in mics %}
+                <option value="{{ m.label }}" {% if m.label == mic_selected %}selected{% set ns.found = true %}{% endif %}>{{ m.label }} ({{ m.channels }} ch{% if m.rate %}, {{ (m.rate / 1000) | round(1) }} kHz{% endif %})</option>
+                {% endfor %}
+                {% if not ns.found %}
+                <option value="{{ mic_selected }}" selected>{{ mic_selected }} (not connected)</option>
+                {% endif %}
+            </select>
+            <p style="font-size: 0.8rem; color: #9ca3af; margin: 6px 0 0;">
+                Now listening with: {{ mic_note }}.<br>
+                The microphone is remembered by name, so it is found again if USB devices change order.
+                A microphone plugged in after the app started appears here after a restart.
+            </p>
+            <label>Microphone Sampling Duration (seconds)</label>
+            <input type="number" name="mic_interval_seconds" value="{{ config.mic_interval_seconds }}">
+        </div>
+
+        <div class="card">
+            <h3>JPlay Players</h3>
+            <p style="font-size: 0.85rem; color: #9ca3af; margin-top: 0;">
+                Your JPlay players (address and port of the player's web page, usually 8080). The display shows
+                one of them, full screen: pick it with the round button (or later from the menu on the display).
+                While it's idle, the display shows what the microphone hears. Untick a player to leave it out.
+            </p>
+            <div id="player-list">
+                {% set view = config.view_player or (config.players[0].id if config.players else '') %}
+                {% for p in config.players %}
+                <div class="row">
+                    <input type="radio" name="view_player_row" value="{{ loop.index0 }}" title="Show this player on the display" style="width: 18px; flex: none;" {% if p.id == view %}checked{% endif %}>
+                    <input type="checkbox" name="player_enabled" value="{{ loop.index0 }}" title="Use this player" style="width: 18px; flex: none;" {% if p.enabled is not defined or p.enabled %}checked{% endif %}>
+                    <input type="text" name="player_name" value="{{ p.name }}" placeholder="Name">
+                    <input type="text" name="player_host" value="{{ p.host }}" placeholder="IP Address">
+                    <input type="number" name="player_port" value="{{ p.port }}" style="width: 100px;">
+                </div>
+                {% endfor %}
+            </div>
+            <button type="button" class="btn btn-add" onclick="addPlayerRow()">+ Add JPlay Player</button>
+            <label class="checkbox-label" style="margin-top: 16px;">
+                <input type="checkbox" name="radio_listen" {% if config.radio_listen %}checked{% endif %}>
+                Recognise radio songs from the stream
+            </label>
+            <p style="font-size: 0.8rem; color: #9ca3af; margin: 6px 0 0;">
+                While a player plays the radio, this unit listens to the stream (10 seconds every half minute, and
+                when the station names a new song) and recognises the song. That beats what many stations send:
+                only their own name, or the show mixed into the artist. Needs ffmpeg.
+            </p>
+        </div>
+
+        <div class="card">
+            <h3>Lyrics</h3>
+            <label class="checkbox-label">
+                <input type="checkbox" name="lyrics_enabled" {% if config.lyrics_enabled %}checked{% endif %}>
+                Show the lyrics
+            </label>
+            <p style="font-size: 0.8rem; color: #9ca3af; margin: 6px 0 12px;">
+                From LRCLIB (lrclib.net). When the lyrics have times, the line being sung is highlighted and the text
+                follows the music; otherwise it scrolls slowly through the song. Songs without lyrics look as before.
+            </p>
+            <label for="lyrics_offset_seconds">Lyrics timing (seconds)</label>
+            <input type="number" id="lyrics_offset_seconds" name="lyrics_offset_seconds" step="0.5" min="-30" max="30"
+                   value="{{ config.lyrics_offset_seconds or 0 }}" style="width: 120px;">
+            <p style="font-size: 0.8rem; color: #9ca3af; margin: 6px 0 0;">
+                If the highlighted line runs ahead of the singing, lower this (e.g. -1.5); if it lags, raise it.
+                Mostly needed for radio and records, where the place in the song comes from recognising it.
+            </p>
+        </div>
+
+        <div class="card">
+            <h3>Room &amp; hub (JPlay Spins)</h3>
+            <p style="font-size: 0.85rem; color: #9ca3af; margin-top: 0;">
+                The hub keeps one history for all rooms (records you put on, radio and other streams) and the lyrics
+                for the whole house. This display tells it what this room hears and plays.
+            </p>
+            <label>Room</label>
+            <input type="text" name="room" value="{{ config.room }}" placeholder="e.g. Lounge" maxlength="40">
+            <label class="checkbox-label" style="margin-top: 10px;">
+                <input type="checkbox" name="report_plays" {% if config.report_plays %}checked{% endif %}>
+                Report this room's plays to the hub
+            </label>
+            <label>JPlay player in this room</label>
+            <select name="room_player">
+                <option value="" {% if not config.room_player %}selected{% endif %}>None (no JPlay player in this room)</option>
+                {% for p in config.players %}
+                <option value="{{ p.host }}" {% if config.room_player == p.host %}selected{% endif %}>{{ p.name }} ({{ p.host }})</option>
+                {% endfor %}
+            </select>
+            <p style="font-size: 0.8rem; color: #9ca3af; margin: 6px 0 0;">
+                While this player plays, the hub files the songs under its source: Radio, Plex, Spotify or
+                Bluetooth, and a CD in the player as a CD. When it's idle, what the microphone hears counts as
+                heard in this room (and, when the hub is connected to JPlay Records, is matched against your records).
+            </p>
+            <label>Hub address</label>
+            <input type="text" name="hub" value="{{ config.hub }}" placeholder="Empty: find it on the network">
+            <p style="font-size: 0.8rem; color: #9ca3af; margin: 6px 0 0;">
+                {% if hub_found and hub_found.startswith('http://127.') %}Hub: this Pi (<a href="/" onclick="this.href = location.protocol + '//' + location.hostname + ':8090/'">open the hub</a>){% elif hub_found %}Hub: <a href="{{ hub_found }}/">{{ hub_found }}</a>{% else %}<span style="color: #fca5a5;">No hub found.</span> Make one unit the hub (sudo bash deploy/install.sh --role …,hub) or type its address.{% endif %}
+                {% if config.room %}<br>Status: {{ report.queued }} waiting to be sent · last sent {{ report_seen.last_ok }}{% else %}<br>Give the room a name to report its plays.{% endif %}
+                {% if report.last_error %}<br><span style="color: #fca5a5;">Last error: {{ report.last_error }}</span>{% endif %}
+            </p>
+        </div>
+
+        <button type="submit" class="btn">Save & Apply Settings</button>
+    </form>
+
+    {% if is_local %}
+    <div class="card" style="margin-top: 30px; border: 1px solid #dc2626;">
+        <h3 style="color: #ef4444; margin-top:0;">Power Controls</h3>
+        <p style="font-size: 0.85rem; color: #9ca3af;">Safely reboot or shut down the Raspberry Pi system.</p>
+        <div class="power-controls">
+            <button class="btn btn-warning" onclick="systemAction('reboot')">Reboot System</button>
+            <button class="btn btn-danger" onclick="systemAction('shutdown')">Shutdown System</button>
+        </div>
+    </div>
+    {% endif %}
+
+    <script>
+        /* ---------- version & updates ---------- */
+        (() => {
+            const $ = id => document.getElementById(id);
+            const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+            const ago = t => {
+                if (!t) return 'never';
+                const m = Math.floor((Date.now() / 1000 - t) / 60);
+                return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`;
+            };
+            let st = null, timer = null, restarting = false, fastUntil = 0;   // fast: just after pressing a button
+            async function load() {
+                try {
+                    st = await (await fetch('/api/update', { cache: 'no-store' })).json();
+                    restarting = false;
+                } catch {
+                    restarting = true;                     // the app is restarting during an update
+                }
+                render();
+                clearTimeout(timer);
+                timer = setTimeout(load, restarting || st?.in_progress || Date.now() < fastUntil ? 2000 : 30000);
+            }
+            function render() {
+                if (!st) return;
+                $('upd-version').textContent = `Version ${st.version}`;
+                const badge = $('upd-badge'), install = $('upd-install');
+                badge.className = 'upd-badge';
+                let summary = '';
+                if (restarting) {
+                    badge.textContent = 'restarting…';
+                } else if (!st.supported) {
+                    badge.textContent = 'updates not set up';
+                    summary = 'Run once on the Pi: cd ~/jplayingnow && sudo bash deploy/install-updater.sh';
+                } else if (st.state === 'updating') {
+                    badge.textContent = 'updating…';
+                    summary = st.message;
+                } else if (st.state === 'checking') {
+                    badge.textContent = 'checking…';
+                } else if (st.state === 'failed' || st.state === 'rolled_back') {
+                    badge.textContent = st.state === 'rolled_back' ? 'update undone' : 'update failed';
+                    badge.classList.add('bad');
+                    summary = st.message;
+                } else if (st.available) {
+                    badge.textContent = `${st.latest} available`;
+                    badge.classList.add('new');
+                } else {
+                    badge.textContent = 'up to date';
+                    if (st.state === 'done' && st.finished_at && Date.now() / 1000 - st.finished_at < 600) summary = st.message;
+                }
+                if (st.supported && !summary) summary = `Checked ${ago(st.checked_at)}`;
+                $('upd-summary').textContent = summary;
+                const notes = $('upd-notes');
+                notes.hidden = !(st.available && st.notes);
+                notes.textContent = (st.notes || '').replace(/^## /gm, 'Version ');
+                install.hidden = !(st.supported && st.available && !st.in_progress && !restarting);
+                install.textContent = `Update to ${st.latest}`;
+                $('upd-check').disabled = !st.supported || st.in_progress || restarting;
+                const log = $('upd-log');
+                log.hidden = !(st.in_progress || st.state === 'failed' || st.state === 'rolled_back') || !st.log?.length;
+                log.textContent = (st.log || []).join('\n');
+            }
+            async function post(path, body) {
+                const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+                if (!r.ok) alert((await r.json().catch(() => ({}))).error || 'That didn\'t work');
+                fastUntil = Date.now() + 90000;
+                load();
+            }
+            $('upd-check').addEventListener('click', () => post('/api/update/check'));
+            $('upd-install').addEventListener('click', () => {
+                if (confirm(`Update this Pi to ${st.latest}? Player, display and hub restart for a few seconds.`)) post('/api/update/install', { target: st.target });
+            });
+            load();
+        })();
+
+        function addPlayerRow() {
+            const div = document.createElement('div');
+            div.className = 'row';
+            const idx = document.querySelectorAll('#player-list .row').length;
+            div.innerHTML = `
+                <input type="radio" name="view_player_row" value="${idx}" title="Show this player on the display" style="width: 18px; flex: none;">
+                <input type="checkbox" name="player_enabled" value="${idx}" title="Use this player" style="width: 18px; flex: none;" checked>
+                <input type="text" name="player_name" placeholder="Name">
+                <input type="text" name="player_host" placeholder="IP Address">
+                <input type="number" name="player_port" value="8080" style="width: 100px;">
+            `;
+            document.getElementById('player-list').appendChild(div);
+        }
+
+        async function systemAction(action) {
+            if (!confirm(`Are you sure you want to ${action} the Raspberry Pi?`)) return;
+            try {
+                await fetch(`/system/${action}`, { method: 'POST' });
+                alert(`System action triggered: ${action}.`);
+            } catch(e) { alert(`Action failed: ${e}`); }
+        }
+    </script>
+</body>
+</html>

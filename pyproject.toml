@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jplay"
+version = "2.0.0"
+description = "JPlay for Raspberry Pi: a multi-source music player, the JPlaying Now display and a hub that keeps the house's plays and lyrics"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+# What every role needs
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "httpx>=0.27",
+    "requests>=2.31",
+    "dbus-next>=0.2.3",     # announcing on the network (Avahi) and Bluetooth
+]
+
+[project.optional-dependencies]
+player = ["websockets>=12", "plexapi>=4.15"]
+display = [
+    "jinja2>=3.1", "python-multipart>=0.0.9", "shazamio>=0.6", "sounddevice>=0.4", "numpy>=1.24",
+    "audioop-lts; python_version >= '3.13'",   # shazamio needs audioop, which Python 3.13 removed
+]
+hub = ["jinja2>=3.1", "python-multipart>=0.0.9"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+jplay = "jplay.player.__main__:main"
+jplay-display = "jplay.display.__main__:main"
+jplay-hub = "jplay.hub.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["jplay*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

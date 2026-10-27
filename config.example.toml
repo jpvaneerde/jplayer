@@ -1,0 +1,71 @@
+# JPlay configuration. Copy to /etc/jplay/config.toml (the installer does this).
+# Anything you leave out uses the built-in default shown here.
+
+[server]
+host = "0.0.0.0"
+port = 8080
+# Shown in the web UI, and used as the Spotify Connect and Bluetooth name.
+name = "JPlay"
+
+[paths]
+state_dir = "/var/lib/jplay"     # favourites, CD metadata cache, Spotify credentials
+runtime_dir = "/run/jplay"       # mpv socket and temporary playlists
+
+[audio]
+# Which DAC to play to.
+#   "auto"                       a USB DAC if one is switched on, otherwise a DAC HAT
+#                                (HDMI and the headphone jack are never picked automatically)
+#   "hw:CARD=sndrpihifiberry,DEV=0"   HiFiBerry DAC2 HD (and other HiFiBerry boards)
+#   "hw:CARD=DAC,DEV=0"          a USB DAC; the card name comes from the DAC itself
+#   "null"                       silent, for testing on a PC
+# List the names with:  aplay -L | grep ^hw:CARD
+# You can also pick the output on the web page (Output); that choice wins over this line.
+device = "auto"
+# Hardware volume (an amixer control on the DAC). Empty = fixed line-level output, with the
+# volume on your amplifier. List controls with: amixer -c <card name> scontrols
+# mixer_card limits the control to one card; leave it empty to use it on whichever DAC is active.
+mixer_card = ""
+mixer_control = ""
+
+[radio]
+enabled = true
+radio_browser_url = "https://de1.api.radio-browser.info"
+
+[plex]
+enabled = true
+# Your Plex Media Server, e.g. "http://192.168.1.10:32400"
+url = ""
+# X-Plex-Token. How to find it: https://support.plex.tv/articles/204059436
+# You can also set it in the environment as JPLAY_PLEX_TOKEN instead.
+token = ""
+# Mark tracks as played in Plex once half of them (or 4 minutes) has played.
+scrobble = true
+
+[cd]
+enabled = true
+device = "/dev/sr0"
+# The disc is read into memory as soon as it goes in; playback can start after a second
+# or two, while the rest is still being read.
+read_speed = 0          # 0 = as fast as the drive goes; e.g. 8 for a quieter but slower read
+paranoia = "light"      # error correction: "light" (fast), "full" (slow, scratched discs), "off"
+cache_dir = "/dev/shm/jplay-cd"
+autoplay = false        # true = start playing (and take over) when a disc goes in
+musicbrainz = true      # look up album and track names
+
+[spotify]
+enabled = true
+librespot_binary = "librespot"
+device_name = ""        # defaults to server.name
+bitrate = 320
+extra_args = []
+
+[bluetooth]
+enabled = true
+alias = ""              # defaults to server.name
+discoverable_seconds = 180
+
+[webhook]
+# Every track that plays at least min_seconds (on any source) is POSTed here as JSON,
+# e.g. for JPlay Spins. Leave empty to switch it off.
+url = ""
+min_seconds = 30
