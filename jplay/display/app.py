@@ -47,6 +47,7 @@ try:
     from .. import __version__
     from ..common import hub as hubs, no_stale_pages, system
     from ..common.announce import DISPLAY_TYPE, Announcer
+    from ..common import sysupdates
     from ..common.updates import UpdateError
 except Exception:
     # Imports run with stderr silenced (to hide ALSA noise); show why startup failed instead of exiting silently.
@@ -104,6 +105,8 @@ HISTORY_DB = os.path.join(DATA_DIR, "history.db")
 KIOSK_SERVICE = "jplay-kiosk"     # cage + Chromium on the Pi's own screen (deploy/jplay-kiosk.service)
 # Versions and updates: the separate updater (deploy/update.sh) does the work for the whole Pi; see common/updates.py
 UPDATES = system.updates()
+SYSTEM = system.sysupdates()          # Raspberry Pi OS updates (deploy/system-update.sh)
+sysupdates.add_routes(app, SYSTEM, role="display")
 
 os.makedirs(STATIC_DIR, exist_ok=True)
 templates = Jinja2Templates(directory=STATIC_DIR)
@@ -1354,6 +1357,9 @@ async def background_auto_update():
             if target:
                 print(f"[update] installing {target} automatically")
                 await loop.run_in_executor(None, UPDATES.install, target)
+            elif not UPDATES.status()["in_progress"] and await loop.run_in_executor(None, SYSTEM.auto_due, busy):
+                print("[update] installing Raspberry Pi OS updates automatically")
+                await loop.run_in_executor(None, SYSTEM.run_auto)
         except Exception as e:
             print(f"[update] {type(e).__name__}: {e}")
         await asyncio.sleep(60)

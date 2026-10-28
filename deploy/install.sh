@@ -61,8 +61,27 @@ units() {
   systemctl daemon-reload
 }
 
+sudoers() {
+  # Exactly what the apps may do as root: start their updaters, switch the kiosk and SSH, restart. Nothing else.
+  local tmp; tmp="$(mktemp)"
+  cat > "$tmp" <<SUDO
+# JPlay (deploy/install.sh): the apps may start their updaters, switch the kiosk and SSH, and restart. Nothing else.
+jplay ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block jplayer-update.service, /usr/bin/systemctl start --no-block jplayer-update-check.service
+jplay ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block jplayer-system-check.service, /usr/bin/systemctl start --no-block jplayer-system-update.service, /usr/bin/systemctl start --no-block jplayer-system-reboot.service
+jplay ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now jplay-kiosk, /usr/bin/systemctl disable --now jplay-kiosk
+jplay ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now ssh, /usr/bin/systemctl disable --now ssh
+jplay ALL=(root) NOPASSWD: /usr/sbin/reboot, /usr/sbin/shutdown
+SUDO
+  visudo -cf "$tmp" >/dev/null
+  install -m 440 "$tmp" /etc/sudoers.d/jplay
+  rm -f "$tmp"
+}
+
 if [[ -n "$UNITS_ONLY" ]]; then
+  # The updater runs this after an update that changed the systemd files: put them, the sudo rules and the
+  # updaters' units in place (nothing else changes)
   units
+  [[ -f /etc/jplay/roles ]] && { sudoers; bash "$REPO/deploy/install-updater.sh"; }
   exit 0
 fi
 
@@ -208,17 +227,7 @@ else
 fi
 
 # ------------------------------------------------------------------ sudo: exactly what the apps may do as root
-tmp="$(mktemp)"
-cat > "$tmp" <<SUDO
-# JPlay (deploy/install.sh): the apps may start their updater, switch the kiosk and SSH, and reboot. Nothing else.
-jplay ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block jplayer-update.service, /usr/bin/systemctl start --no-block jplayer-update-check.service
-jplay ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now jplay-kiosk, /usr/bin/systemctl disable --now jplay-kiosk
-jplay ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now ssh, /usr/bin/systemctl disable --now ssh
-jplay ALL=(root) NOPASSWD: /usr/sbin/reboot, /usr/sbin/shutdown
-SUDO
-visudo -cf "$tmp" >/dev/null
-install -m 440 "$tmp" /etc/sudoers.d/jplay
-rm -f "$tmp"
+sudoers
 
 # ------------------------------------------------------------------ updates
 say "Updates"

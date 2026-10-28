@@ -3,6 +3,10 @@
 #   jplayer-update.service         updates to the version an app asked for, restarts the apps, goes back if one doesn't start
 #   jplayer-update-check.service   fetches from GitHub and notes the newest release
 #   jplayer-update-check.timer     runs the check 5 minutes after boot and every 6 hours
+# and for Raspberry Pi OS itself (deploy/system-update.sh):
+#   jplayer-system-check.service/.timer   apt update once a day: how many updates wait, is a restart needed
+#   jplayer-system-update.service         installs them (the apps start it: by hand, or at night when nothing plays)
+#   jplayer-system-reboot.service         restarts the Pi
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "Run this with sudo"; exit 1; }
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -64,7 +68,41 @@ Persistent=true
 WantedBy=timers.target
 UNIT
 
+# Raspberry Pi OS updates
+for mode in check update reboot; do
+  arg="$mode"; [[ "$mode" == update ]] && arg=install
+  desc="Check for Raspberry Pi OS updates"
+  [[ "$mode" == update ]] && desc="Install Raspberry Pi OS updates"
+  [[ "$mode" == reboot ]] && desc="Restart the Pi (asked for by JPlay)"
+  cat > "/etc/systemd/system/$NAME-system-$mode.service" <<UNIT
+[Unit]
+Description=$desc
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=STATE_DIR=$STATE_DIR APP_USER=jplay
+ExecStart=/bin/bash $REPO/deploy/system-update.sh $arg
+TimeoutStartSec=60min
+UNIT
+done
+cat > "/etc/systemd/system/$NAME-system-check.timer" <<UNIT
+[Unit]
+Description=Check for Raspberry Pi OS updates once a day
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1d
+RandomizedDelaySec=2h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
 systemctl daemon-reload
+systemctl enable --now "$NAME-system-check.timer" >/dev/null
 systemctl enable --now "$NAME-update-check.timer" >/dev/null
 systemctl start --no-block "$NAME-update-check.service"
 echo "Updater installed: Settings shows the version and new releases in a minute."

@@ -8,14 +8,19 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import KIND_HUB
+from .const import KIND_HUB, KIND_NOW
 from .entity import PlayerEntity
 from .hub import RoomDisplayOnline, add_room_entities
+from .system import binary_sensors as system_binary_sensors, wanted as system_wanted
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback) -> None:
+    if system_wanted(entry):
+        async_add_entities(system_binary_sensors(entry))
     if entry.runtime_data.kind == KIND_HUB:
         add_room_entities(entry, async_add_entities, lambda e, room: [RoomDisplayOnline(e, room)])
+        return
+    if entry.runtime_data.kind == KIND_NOW:
         return
     async_add_entities([
         PlayerBinary(entry, "playing", "Playing", "mdi:play-circle", BinarySensorDeviceClass.RUNNING,

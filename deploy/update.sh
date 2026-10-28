@@ -232,8 +232,8 @@ do_install() {
   while read -r f; do
     [[ -n "$f" ]] && say "$f changed"
   done < <(git_ diff --name-only "$PREVIOUS" HEAD -- 'deploy/*.service' 'deploy/*.timer' 'deploy/*.rules')
-  # Changed systemd files are put in place by the installer (it keeps everything else as it is)
-  if [[ -n "$(git_ diff --name-only "$PREVIOUS" HEAD -- 'deploy/*.service' 'deploy/*.timer' 'deploy/*.rules')" && -f /etc/jplay/roles ]]; then
+  # Changed systemd files (or the updaters' setup) are put in place by the installer; nothing else changes
+  if [[ -n "$(git_ diff --name-only "$PREVIOUS" HEAD -- 'deploy/*.service' 'deploy/*.timer' 'deploy/*.rules' 'deploy/install-updater.sh' 'deploy/install.sh')" && -f /etc/jplay/roles ]]; then
     say "Installing the changed systemd files"
     bash "$REPO/deploy/install.sh" --units-only >/tmp/jplay-update-units.log 2>&1 9>&- || say "That failed: $(tail -n 1 /tmp/jplay-update-units.log)"
   fi

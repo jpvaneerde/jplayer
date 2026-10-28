@@ -98,3 +98,17 @@ header .theme-btn { margin-left: auto; width: 36px; height: 36px; flex: none; di
                      border-radius: 999px; background: var(--card); border: 1px solid var(--line); color: var(--muted); }
 header .theme-btn svg { width: 17px; height: 17px; fill: currentColor; }
 .card { box-shadow: var(--shadow); }
+
+/* System card (web/hub/system.js) */
+#system-card h3 { display: none; }
+.sys-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sys-badge { font-size: 0.8rem; font-weight: 700; padding: 2px 10px; border-radius: 999px; background: rgba(148,163,184,0.18); }
+.sys-badge.new { background: rgba(16,185,129,0.2); color: var(--accent); }
+.sys-badge.bad { background: rgba(248,113,113,0.2); color: #f87171; }
+.sys-muted { color: var(--muted); font-size: 0.85rem; margin-top: 6px; }
+.sys-buttons { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.sys-btn { font: inherit; font-weight: 700; padding: 8px 16px; border-radius: 10px; border: 1px solid rgba(148,163,184,0.3); background: transparent; color: inherit; cursor: pointer; }
+.sys-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.sys-btn:disabled { opacity: 0.5; }
+.sys-log { font-size: 0.75rem; white-space: pre-wrap; color: var(--muted); }
+.sys-check { display: flex; gap: 8px; align-items: flex-start; margin-top: 12px; font-size: 0.9rem; }

@@ -20,8 +20,9 @@ from .coordinator import HubCoordinator, NowCoordinator, PlayerCoordinator
 PLATFORMS: dict[str, list[Platform]] = {
     KIND_PLAYER: [Platform.MEDIA_PLAYER, Platform.SELECT, Platform.SENSOR, Platform.BINARY_SENSOR,
                   Platform.BUTTON, Platform.SWITCH, Platform.UPDATE],
-    KIND_NOW: [Platform.SWITCH, Platform.SELECT, Platform.SENSOR, Platform.UPDATE],
-    KIND_HUB: [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.UPDATE],
+    KIND_NOW: [Platform.SWITCH, Platform.SELECT, Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON,
+               Platform.UPDATE],
+    KIND_HUB: [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON, Platform.UPDATE],
 }
 
 

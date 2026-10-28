@@ -5,11 +5,17 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import KIND_PLAYER
 from .entity import PlayerEntity
 from .media_player import call
+from .system import buttons as system_buttons, wanted as system_wanted
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback) -> None:
+    if system_wanted(entry):
+        async_add_entities(system_buttons(entry))
+    if entry.runtime_data.kind != KIND_PLAYER:
+        return
     async_add_entities([
         PlayerButton(entry, "eject", "Eject CD", "mdi:eject", "/api/v1/cd/eject", needs="cd"),
         PlayerButton(entry, "standby", "Standby", "mdi:power-sleep", "/api/v1/standby"),

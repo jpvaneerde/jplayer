@@ -68,7 +68,7 @@ async def simulate_update(st: dict, ok: bool = True):
 
 
 class FakePlayer:
-    def __init__(self, with_updates=True):
+    def __init__(self, with_updates=True, system=None):
         self.update = fake_update_status() if with_updates else None
         self.update_ok = True
         self.status = copy.deepcopy(STATUS)
@@ -86,6 +86,9 @@ class FakePlayer:
         if with_updates:
             app.router.add_get("/api/v1/update", lambda r: web.json_response(self.update))
             app.router.add_post("/api/v1/update/install", self.install)
+        if system is not None:
+            self.system = system
+            app.router.add_get("/api/v1/system", lambda r: web.json_response(self.system))
         app.router.add_route("*", "/api/v1/{tail:.*}", self.record)
         self.app = app
 
@@ -468,3 +471,35 @@ async def test_hub(hass: HomeAssistant, socket_enabled):
         assert await hass.config_entries.async_unload(entry.entry_id)
     finally:
         await runner.cleanup()
+
+
+async def test_system_updates(hass: HomeAssistant, socket_enabled):
+    """The Pi's OS updates show once: on the player (it speaks for the Pi), not on the display next to it."""
+    fake = FakePlayer(system={"supported": True, "primary": True, "updates": 12, "reboot_needed": True,
+                              "packages": ["chromium", "libc6"], "os": "Debian GNU/Linux 13 (trixie)", "state": "idle",
+                              "auto": "night", "kernel": "6.12.47+rpt-rpi-v8"})
+    now = FakeNow()
+    now.app.router.add_get("/api/system", lambda r: web.json_response({"supported": True, "primary": False, "updates": 12}))
+    runner, port = await serve(fake.app)
+    runner2, port2 = await serve(now.app)
+    try:
+        r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        r = await hass.config_entries.flow.async_configure(r["flow_id"], {"next_step_id": "player"})
+        r = await hass.config_entries.flow.async_configure(r["flow_id"], {"host": "127.0.0.1", "port": port})
+        r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        r = await hass.config_entries.flow.async_configure(r["flow_id"], {"next_step_id": "jplayingnow"})
+        r = await hass.config_entries.flow.async_configure(r["flow_id"], {"name": "Lounge display", "host": "127.0.0.1", "port": port2})
+        await hass.async_block_till_done()
+        updates = hass.states.get("sensor.lounge_system_updates")
+        assert updates.state == "12" and updates.attributes["packages"] == ["chromium", "libc6"]
+        assert hass.states.get("binary_sensor.lounge_restart_needed").state == "on"
+        assert hass.states.get("sensor.lounge_display_system_updates") is None      # once per Pi
+        await hass.services.async_call("button", "press", {"entity_id": "button.lounge_install_system_updates"}, blocking=True)
+        assert ("POST", "/api/v1/system/install", {"reboot": True}) in fake.calls
+        await hass.services.async_call("button", "press", {"entity_id": "button.lounge_restart_pi"}, blocking=True)
+        assert ("POST", "/api/v1/system/reboot", {}) in fake.calls
+        for e in hass.config_entries.async_entries(DOMAIN):
+            await hass.config_entries.async_unload(e.entry_id)
+    finally:
+        await runner.cleanup()
+        await runner2.cleanup()

@@ -27,6 +27,7 @@ from .core.mpv import MpvEngine
 from .core.output import Output
 from .core.store import StateStore
 from ..common import no_stale_pages, system
+from ..common.sysupdates import SystemError_, status_for
 from ..common.updates import UpdateError
 from .core.volume import Volume
 from .sources.base import SourceError
@@ -122,6 +123,14 @@ class DiscoverableBody(BaseModel):
 
 class UpdateInstallBody(BaseModel):
     target: str | None = None
+
+
+class SystemInstallBody(BaseModel):
+    reboot: bool = False           # restart afterwards when a new kernel or firmware needs it
+
+
+class SystemSettingsBody(BaseModel):
+    auto: str = Field(pattern="^(off|night)$")
 
 
 class UpdateSettingsBody(BaseModel):
@@ -424,6 +433,41 @@ def api_router() -> APIRouter:
         request.app.state.updates.save_settings(body.channel, body.auto)
         return await asyncio.to_thread(update_status, request)
 
+    # -- Raspberry Pi OS updates (deploy/system-update.sh does the work, as root)
+    def sysu(request: Request):
+        return request.app.state.sysupdates
+
+    def sys_call(fn, *args):
+        try:
+            fn(*args)
+        except SystemError_ as exc:
+            raise SourceError(str(exc), 409) from exc
+
+    @r.get("/system")
+    async def system_status(request: Request) -> dict[str, Any]:
+        """Raspberry Pi OS: updates waiting, restart needed, and how an install is going."""
+        return await asyncio.to_thread(status_for, sysu(request), "player")
+
+    @r.post("/system/check")
+    async def system_check(request: Request) -> dict[str, Any]:
+        await asyncio.to_thread(sys_call, sysu(request).check)
+        return {"ok": True}
+
+    @r.post("/system/install")
+    async def system_install(request: Request, body: SystemInstallBody | None = None) -> dict[str, Any]:
+        await asyncio.to_thread(sys_call, sysu(request).install, bool(body and body.reboot))
+        return {"ok": True}
+
+    @r.post("/system/reboot")
+    async def system_reboot(request: Request) -> dict[str, Any]:
+        await asyncio.to_thread(sys_call, sysu(request).reboot)
+        return {"ok": True}
+
+    @r.put("/system/settings")
+    async def system_settings(request: Request, body: SystemSettingsBody) -> dict[str, Any]:
+        await asyncio.to_thread(sysu(request).set_auto, body.auto)
+        return await asyncio.to_thread(sysu(request).status)
+
     # -- live events
     @r.websocket("/events")
     async def events(ws: WebSocket) -> None:
@@ -466,6 +510,10 @@ async def auto_update(app: FastAPI) -> None:
             if target:
                 log.info("Installing %s automatically", target)
                 await asyncio.to_thread(app.state.updates.install, target)
+            elif not app.state.updates.status()["in_progress"] and \
+                    await asyncio.to_thread(app.state.sysupdates.auto_due, busy):
+                log.info("Installing Raspberry Pi OS updates automatically")
+                await asyncio.to_thread(app.state.sysupdates.run_auto)
         except Exception as exc:
             log.warning("Automatic update: %s", exc)
 
@@ -488,6 +536,7 @@ def create_app(config: Config) -> FastAPI:
         c.manager = SourceManager(c, sources)
         app.state.ctx = c
         app.state.updates = system.updates()
+        app.state.sysupdates = system.sysupdates()
         await c.manager.start()
         announcer = Announcer(config["server"]["name"], int(config["server"]["port"]),
                               {"id": player_id(c), "version": app_version(app), "path": "/api/v1"})

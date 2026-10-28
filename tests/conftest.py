@@ -10,6 +10,7 @@ def own_state(tmp_path, monkeypatch):
     monkeypatch.setattr(system, "ROLES_FILE", tmp_path / "roles")
     system.state_root.cache_clear()
     system.updates.cache_clear()
+    system.sysupdates.cache_clear()
     yield
     system.state_root.cache_clear()
     system.updates.cache_clear()

@@ -74,3 +74,9 @@ def primary_role() -> str:
 @lru_cache(maxsize=None)
 def updates() -> Updates:
     return Updates(UPDATER_NAME, str(REPO_DIR), str(state_root()))
+
+
+@lru_cache(maxsize=None)
+def sysupdates():
+    from .sysupdates import SystemUpdates
+    return SystemUpdates(str(state_root()))

@@ -686,8 +686,10 @@ const output = {
             ...controls.map((c) => h("option", { value: c, selected: cur.mixer_control === c }, `DAC control: ${c}`)))
         : h("p", { class: "hint" }, curCard ? `${curCard.name} has no volume control, so the output is fixed. Use the amplifier's volume.` : "Volume settings appear when the DAC is connected."),
       h("div", { class: "updates" }),
+      h("div", { class: "updates system" }),
     ));
     updates.mount(this.el.querySelector(".updates"));
+    sysUpdates.mount(this.el.querySelector(".system"));
   },
 };
 
@@ -751,6 +753,63 @@ const updates = {
         h("input", { type: "checkbox", checked: st.auto === "night", onchange: (e) => this.act("PUT", "/update/settings", { auto: e.target.checked ? "night" : "off" }) }),
         "Install updates automatically at night (03:00–05:00, when nothing plays)") : null,
       st.supported ? h("p", { class: "hint" }, "If the player doesn't start after an update, the previous version comes back by itself.") : null,
+    ));
+  },
+};
+
+// ------------------------------------------------------------------ Raspberry Pi OS updates (on the Output page)
+const sysUpdates = {
+  st: null,
+  fastUntil: 0,
+  mount(el) { this.el = el; this.load(); },
+  async load() {
+    clearTimeout(this.timer);
+    if (!this.el || !this.el.isConnected) return;
+    let away = false;
+    try {
+      const r = await fetch("/api/v1/system", { cache: "no-store" });
+      if (!r.ok) throw new Error();
+      this.st = await r.json();
+    } catch { away = true; }   // the Pi restarts
+    this.draw(away);
+    const fast = away || this.st?.in_progress || Date.now() < this.fastUntil;
+    this.timer = setTimeout(() => this.load(), fast ? 3000 : 60000);
+  },
+  async act(method, path, body) {
+    try { await api(method, path, body); } catch { /* toast shown */ }
+    this.fastUntil = Date.now() + 120000;
+    this.load();
+  },
+  draw(away) {
+    const st = this.st;
+    if (!st) return;
+    const ago = (t) => {
+      if (!t) return "not yet";
+      const m = Math.floor((Date.now() / 1000 - t) / 60);
+      return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.floor(m / 60)} h ago` : `${Math.floor(m / 1440)} days ago`;
+    };
+    let badge = "Up to date", tone = "", line = st.supported ? `Checked ${ago(st.checked_at)}` : "Run once on the Pi: sudo bash /opt/jplayer/deploy/install.sh";
+    if (away) badge = "Restarting…";
+    else if (!st.supported) badge = "Not set up";
+    else if (st.state === "installing") { badge = "Installing…"; line = st.message; }
+    else if (st.state === "checking") badge = "Checking…";
+    else if (st.state === "failed") { badge = "Failed"; tone = "bad"; line = st.message; }
+    else if (st.updates) { badge = `${st.updates} update${st.updates === 1 ? "" : "s"}`; tone = "new"; }
+    else if (st.reboot_needed) { badge = "Restart needed"; tone = "new"; line = "An update is finished once the Pi restarts."; }
+    const busy = away || st.in_progress;
+    this.el.replaceChildren(...kids(
+      h("h2", {}, "System (Raspberry Pi OS)"),
+      h("div", { class: "upd-line" }, h("span", { class: "upd-version" }, st.os || "Raspberry Pi OS"), h("span", { class: `upd-badge ${tone}` }, badge)),
+      line ? h("p", { class: "hint" }, line) : null,
+      st.updates && !busy ? h("p", { class: "hint" }, `Waiting: ${st.packages.slice(0, 12).join(", ")}${st.packages.length > 12 ? "…" : ""}`) : null,
+      st.supported ? h("div", { class: "upd-buttons" },
+        st.updates && !busy ? h("button", { class: "btn primary", onclick: () => confirm(`Install ${st.updates} system updates? Music may stop for a moment; the Pi restarts afterwards if an update needs it (about a minute).`) && this.act("POST", "/system/install", { reboot: true }) }, "Install updates") : null,
+        st.reboot_needed && !st.updates && !busy ? h("button", { class: "btn primary", onclick: () => confirm("Restart the Pi now? It is back in about a minute.") && this.act("POST", "/system/reboot") }, "Restart now") : null,
+        h("button", { class: "btn", disabled: busy, onclick: () => this.act("POST", "/system/check") }, "Check now")) : null,
+      (st.state === "failed" || st.in_progress) && st.log?.length ? h("pre", { class: "upd-log" }, st.log.join("\n")) : null,
+      st.supported ? h("label", { class: "upd-setting check" },
+        h("input", { type: "checkbox", checked: st.auto === "night", onchange: (e) => this.act("PUT", "/system/settings", { auto: e.target.checked ? "night" : "off" }) }),
+        "Install system updates automatically at night (03:00–05:00, when nothing plays) and restart when needed") : null,
     ));
   },
 };

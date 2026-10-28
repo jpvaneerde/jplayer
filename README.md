@@ -146,6 +146,14 @@ and goes back to the previous version when one of them doesn't start. Every app 
 (player: Output → Updates; display and hub: Settings), and Home Assistant has an update entity per player and display.
 Updates can install themselves at night (03:00–05:00, when nothing plays).
 
+**Raspberry Pi OS updates** are handled the same way, by `deploy/system-update.sh` (as root, from its own
+services): once a day it checks how many updates wait, and at night (03:00–05:00, when nothing plays) it installs
+them and restarts the Pi when a new kernel or firmware needs it. Settings files you changed by hand are kept. The
+player's Output page, the display's and the hub's Settings show "System (Raspberry Pi OS)" with Install updates,
+Restart now and the automatic switch; Home Assistant shows "System updates", "Restart needed" and two buttons, once
+per Pi. New Raspberry Pi OS releases (Bookworm to Trixie and so on) aren't done in place: reinstall for those
+(`deploy/backup-old.sh`-style backup of `/etc/jplay` and `/var/lib/jplay`, then `install.sh --restore`).
+
 Release from your PC (PowerShell, in the repo): `.\tools\release.ps1` (asks for the version and notes, tags and
 pushes). The Pis see it within 6 hours, or at once with **Check now**.
 

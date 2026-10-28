@@ -53,9 +53,9 @@ class PlayerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             status = await self.api.get("/api/v1/status")
         except JPlayError as err:
             raise UpdateFailed(str(err)) from err
-        favourites, output, update = await asyncio.gather(
+        favourites, output, update, system = await asyncio.gather(
             self.api.get("/api/v1/radio/favourites"), self.api.get("/api/v1/output"), self.api.get("/api/v1/update"),
-            return_exceptions=True,
+            self.api.get("/api/v1/system"), return_exceptions=True,
         )
         self._note_position(status)
         return {
@@ -63,6 +63,7 @@ class PlayerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "favourites": favourites if isinstance(favourites, list) else (self.data or {}).get("favourites", []),
             "output": output if isinstance(output, dict) else (self.data or {}).get("output"),
             "update": update if isinstance(update, dict) else None,   # None: a player without the update API
+            "system": system if isinstance(system, dict) else None,   # Raspberry Pi OS updates (2.0 and later)
         }
 
     # ---------------------------------------------------------------- live updates
@@ -136,12 +137,12 @@ class NowCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             dashboard, screen_status = await asyncio.gather(self.api.get("/api/dashboard"), self.api.get("/api/screen-status"))
         except JPlayError as err:
             raise UpdateFailed(str(err)) from err
-        try:
-            update = await self.api.get("/api/update")
-        except JPlayError:
-            update = None                  # a display without the update API
+        update, system = await asyncio.gather(self.api.get("/api/update"), self.api.get("/api/system"),
+                                              return_exceptions=True)
         dashboard.pop("config", None)  # settings (and their tokens) aren't needed here
-        return {"dashboard": dashboard, "screen": dashboard.get("screen"), "screen_status": screen_status, "update": update}
+        return {"dashboard": dashboard, "screen": dashboard.get("screen"), "screen_status": screen_status,
+                "update": update if isinstance(update, dict) else None,      # None: a display without the update API
+                "system": system if isinstance(system, dict) else None}
 
 
 class HubCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -159,13 +160,15 @@ class HubCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             info, now = await asyncio.gather(self.api.get("/api/info"), self.api.get("/api/now"))
         except JPlayError as err:
             raise UpdateFailed(str(err)) from err
-        today, spins, update = await asyncio.gather(
+        today, spins, update, system = await asyncio.gather(
             self.api.get(f"/api/stats?days=1&since={int(midnight.timestamp() * 1000)}"),
-            self.api.get("/api/spins?limit=1"), self.api.get("/api/update"), return_exceptions=True)
+            self.api.get("/api/spins?limit=1"), self.api.get("/api/update"), self.api.get("/api/system"),
+            return_exceptions=True)
         return {
             "info": info,
             "rooms": now.get("rooms") or [],
             "today": today if isinstance(today, dict) else (self.data or {}).get("today") or {},
             "spin": ((spins.get("spins") or [None])[0]) if isinstance(spins, dict) else (self.data or {}).get("spin"),
             "update": update if isinstance(update, dict) else None,
+            "system": system if isinstance(system, dict) else None,
         }

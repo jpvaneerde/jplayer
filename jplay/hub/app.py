@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from .. import __version__
 from ..common import no_stale_pages, system
 from ..common.announce import HUB_TYPE, Announcer
+from ..common import sysupdates
 from ..common.updates import UpdateError
 from . import db, importer, lyrics, records, records_sync, spins
 
@@ -127,6 +128,10 @@ async def _auto_update(app: FastAPI) -> None:
             if target:
                 log.info("Installing %s automatically", target)
                 await asyncio.to_thread(app.state.updates.install, target)
+            elif not app.state.updates.status()["in_progress"] and \
+                    await asyncio.to_thread(app.state.sysupdates.auto_due, False):
+                log.info("Installing Raspberry Pi OS updates automatically")
+                await asyncio.to_thread(app.state.sysupdates.run_auto)
         except Exception as exc:
             log.warning("Automatic update: %s", exc)
 
@@ -157,6 +162,8 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
     app = FastAPI(title="JPlay hub", version=__version__, lifespan=lifespan, docs_url="/api/docs",
                   openapi_url="/api/openapi.json", redoc_url=None)
     app.state.updates = system.updates()
+    app.state.sysupdates = system.sysupdates()
+    sysupdates.add_routes(app, app.state.sysupdates, role="hub")
     no_stale_pages(app)
 
     def app_version() -> str:

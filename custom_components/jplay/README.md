@@ -60,6 +60,11 @@ every second.
 | Last record put on | The last record or CD, with its cover, room and number of tracks. |
 | Update | The version of the hub's Pi and its newest release. |
 
+**Raspberry Pi OS updates** (once per Pi, on its player, else its display or hub): **System updates** (how many
+wait; the packages as an attribute), **Restart needed**, and the buttons **Install system updates** (restarts the Pi
+afterwards when needed) and **Restart Pi**. The Pi also installs them by itself at night unless that is switched off
+in its settings.
+
 **Updates:** each player, display and hub has an update entity. Settings → Updates lists the ones with a new release;
 Install asks the device's own updater, which restarts the app and goes back to the previous version if it doesn't
 start (an error then says so). Updates started on the device itself show their progress here too. Install appears
