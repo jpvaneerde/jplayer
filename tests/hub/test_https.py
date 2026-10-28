@@ -64,7 +64,7 @@ def test_obtain_runs_certbot_twice_then_nginx(client, monkeypatch):
 
     def fake_run(cmd, **kw):
         calls.append(cmd)
-        if "certbot" in cmd:
+        if https.CERTBOT_MAIN in cmd:
             assert kw["env"]["JPLAY_DUCKDNS"] == "jplayer"
             d = cmd[cmd.index("-d") + 1]
             name = cmd[cmd.index("--cert-name") + 1]
@@ -72,14 +72,14 @@ def test_obtain_runs_certbot_twice_then_nginx(client, monkeypatch):
         return types.SimpleNamespace(returncode=0, stdout="", stderr="")
     monkeypatch.setattr(subprocess, "run", fake_run)
     https.obtain()
-    domains = [c[c.index("-d") + 1] for c in calls if "certbot" in c]
+    domains = [c[c.index("-d") + 1] for c in calls if https.CERTBOT_MAIN in c]
     assert domains == ["home.jplay.cloud", "*.home.jplay.cloud"]
     assert any("-t" in c for c in calls) and any("reload-or-restart" in c for c in calls)
     assert (https.base_dir() / "nginx.conf").exists() and https.settings()["enabled"]
     # A second run finds both certificates still valid: no certbot
     calls.clear()
     https.obtain()
-    assert not any("certbot" in c for c in calls)
+    assert not any(https.CERTBOT_MAIN in c for c in calls)
 
 
 def test_nginx_refusing_keeps_the_old_settings(client, monkeypatch):

@@ -26,6 +26,7 @@ from . import db, devices
 log = logging.getLogger(__name__)
 NGINX = "/usr/sbin/nginx"
 RENEW_DAYS = 30
+CERTBOT_MAIN = "import sys; from certbot.main import main; sys.exit(main())"
 
 status: dict[str, Any] = {"state": "off", "message": "", "log": [], "updated_at": None}
 
@@ -97,7 +98,8 @@ def _say(msg: str) -> None:
 
 def _certbot(cert_name: str, domain: str, s: dict, staging: bool = False) -> None:
     hook = f"{sys.executable} -m jplay.hub.acme_hook"
-    cmd = [sys.executable, "-m", "certbot", "certonly", "--non-interactive", "--agree-tos",
+    # certbot 5 can't be started with "python -m certbot": call its main() (the same as its own launcher)
+    cmd = [sys.executable, "-c", CERTBOT_MAIN, "certonly", "--non-interactive", "--agree-tos",
            *(["--email", s["email"]] if s["email"] else ["--register-unsafely-without-email"]),
            *_certbot_dirs(), "--manual", "--preferred-challenges", "dns",
            "--manual-auth-hook", f"{hook} auth", "--manual-cleanup-hook", f"{hook} cleanup",
