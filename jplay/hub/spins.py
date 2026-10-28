@@ -479,7 +479,7 @@ def list_plays(kind: str = "", room: str = "", q: str = "", limit: int = 60, off
         where.append("kind = ?")
         params.append(kind)
     if room:
-        where.append("room = ?")
+        where.append("lower(room) = lower(?)")
         params.append(room)
     if q:
         where.append("(title LIKE ? OR artist LIKE ? OR album LIKE ? OR station LIKE ?)")

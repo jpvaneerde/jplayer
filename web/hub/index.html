@@ -45,7 +45,7 @@
 header('/');
 const KIND = { vinyl: 'Vinyl', cd: 'CD', cassette: 'Cassette', radio: 'Radio', plex: 'Plex', spotify: 'Spotify',
                bluetooth: 'Bluetooth', file: 'Stream', stream: 'Stream' };
-const state = { kind: '', room: '', q: '', offset: 0, plays: [], total: 0, days: 30, records: false };
+const state = { kind: '', room: new URLSearchParams(location.search).get('room') || '', q: '', offset: 0, plays: [], total: 0, days: 30, records: false };
 
 function badge(p) {
   if (p.kind === 'physical') return `<span class="badge k-${esc(p.detail || 'vinyl')}">${esc(KIND[p.detail] || 'Record')}</span>`;
@@ -75,7 +75,9 @@ async function loadNow() {
     }).join('') : '<div class="muted">No rooms yet. A display reports to the hub once it has a room (its Settings → Room &amp; hub).</div>';
     const sel = $('room'), keep = sel.value;
     sel.innerHTML = '<option value="">All rooms</option>' + rooms.map((r) => `<option>${esc(r.room)}</option>`).join('');
-    sel.value = keep;
+    // A room from the address (a display's Spins button) once the list is there
+    sel.value = keep || state.room;
+    if (state.room && sel.value !== state.room) sel.value = rooms.find((r) => r.room.toLowerCase() === state.room.toLowerCase())?.room || '';
   } catch (e) { $('now').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 
