@@ -88,3 +88,19 @@ def test_lyrics_come_from_the_hub_and_stay_for_when_it_is_away(client, monkeypat
 def test_the_pages_render(client):
     for path in ("/", "/settings", "/history"):
         assert client.get(path).status_code == 200
+
+
+def test_touch_turns_with_the_screen(client, monkeypatch):
+    ran, restarted = [], []
+    monkeypatch.setattr(display.subprocess, "run", lambda cmd, **kw: ran.append(cmd))
+    monkeypatch.setattr(display, "is_service_active", lambda name: name == display.KIOSK_SERVICE)
+    monkeypatch.setattr(display, "set_service_state", lambda *a: None)
+    monkeypatch.setattr(display, "restart_kiosk_browser", lambda clear=True: restarted.append(clear))
+    client.post("/settings/save", data={"screen_rotation": "inverted", "local_kiosk": "on"}, follow_redirects=False)
+    with open(os.path.join(display.DATA_DIR, "touch-rotation.env")) as f:
+        assert f.read() == 'LIBINPUT_CALIBRATION_MATRIX="-1 0 1 0 -1 1"\n'
+    assert any("udevadm" in c[2] for c in ran if len(c) > 2) and restarted == [False]
+    assert client.get("/api/screen").json()["transform"] == "180"
+    # Saving again with the same rotation leaves the kiosk alone
+    client.post("/settings/save", data={"screen_rotation": "inverted", "local_kiosk": "on"}, follow_redirects=False)
+    assert restarted == [False]

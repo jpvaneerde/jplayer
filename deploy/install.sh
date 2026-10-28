@@ -58,6 +58,8 @@ units() {
     sed "s#/opt/jplayer#$REPO#g" "$REPO/deploy/$u.service" > "/etc/systemd/system/$u.service"
   done
   install -m 644 "$REPO/deploy/90-jplay-backlight.rules" /etc/udev/rules.d/90-jplay-backlight.rules
+  sed "s#/var/lib/jplay#$STATE#g" "$REPO/deploy/99-jplay-touch.rules" > /etc/udev/rules.d/99-jplay-touch.rules
+  udevadm control --reload 2>/dev/null || true
   systemctl daemon-reload
 }
 
@@ -80,6 +82,7 @@ jplay ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now jplay-kiosk, /usr/bin
 jplay ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now ssh, /usr/bin/systemctl disable --now ssh
 jplay ALL=(root) NOPASSWD: /usr/sbin/reboot, /usr/sbin/shutdown
 jplay ALL=(root) NOPASSWD: /usr/sbin/nginx -t -q, /usr/bin/systemctl reload-or-restart nginx
+jplay ALL=(root) NOPASSWD: /usr/bin/udevadm trigger --action=change --subsystem-match=input
 SUDO
   visudo -cf "$tmp" >/dev/null
   install -m 440 "$tmp" /etc/sudoers.d/jplay

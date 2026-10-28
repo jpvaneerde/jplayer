@@ -80,6 +80,7 @@ async def lifespan(app: FastAPI):
     cfg = load_config()
     save_config(cfg)                                # keeps the unit id made just now, and settings moved over
     set_screen_rotation(cfg.get("screen_rotation", "normal"))
+    set_touch_rotation(cfg.get("screen_rotation", "normal"))   # before the kiosk starts (it waits for this app)
     announcer = Announcer(display_name(cfg), PORT, {"id": cfg["unit_id"], "version": app_version(),
                                                     "room": cfg.get("room", ""), "path": "/api"}, DISPLAY_TYPE)
     if ANNOUNCE:
@@ -237,6 +238,31 @@ def set_screen_rotation(rotation: str):
             _run_display_cmd(["xrandr", "-o", rotation], env)
     except Exception as e:
         print(f"Failed to set screen rotation: {e}")
+
+# Touch follows the picture: libinput's calibration matrix per rotation (the compositor, cage, doesn't turn
+# touches with the screen). deploy/99-jplay-touch.rules reads it from this file for every touch screen.
+_TOUCH_MATRIX = {"normal": "1 0 0 0 1 0", "right": "0 1 0 -1 0 1", "inverted": "-1 0 1 0 -1 1", "left": "0 -1 1 1 0 0"}
+UDEVADM = "/usr/bin/udevadm"
+
+def set_touch_rotation(rotation: str) -> bool:
+    """Write the touch screen's turn for udev and let udev re-read it. True when it changed (the kiosk must
+    then start again: touch screens only read it when they appear)."""
+    touch_file = os.path.join(DATA_DIR, "touch-rotation.env")
+    text = f'LIBINPUT_CALIBRATION_MATRIX="{_TOUCH_MATRIX.get(rotation, _TOUCH_MATRIX["normal"])}"\n'
+    try:
+        with open(touch_file) as f:
+            if f.read() == text:
+                return False
+    except OSError:
+        pass
+    try:
+        with open(touch_file, "w") as f:
+            f.write(text)
+        subprocess.run(["sudo", "-n", UDEVADM, "trigger", "--action=change", "--subsystem-match=input"],
+                       capture_output=True, timeout=15)
+    except Exception as e:
+        print(f"Failed to set touch rotation: {e}")
+    return True
 
 def load_config():
     cfg = dict(DEFAULT_CONFIG)
@@ -1015,6 +1041,7 @@ async def settings_page(request: Request):
 async def save_settings(request: Request):
     form = await request.form()
     cfg = load_config()
+    old_rotation = cfg.get("screen_rotation", "normal")
     
     cfg["theme"] = form.get("theme", "dark")
     cfg["screen_rotation"] = form.get("screen_rotation", "normal")
@@ -1090,6 +1117,10 @@ async def save_settings(request: Request):
     if is_local_request(request) and enable_ssh != is_service_active("ssh"):
         errors.append(await asyncio.to_thread(set_service_state, "ssh", enable_ssh))
     set_screen_rotation(cfg["screen_rotation"])
+    if await asyncio.to_thread(set_touch_rotation, cfg["screen_rotation"]) or old_rotation != cfg["screen_rotation"]:
+        # Touch screens only take their new turn when the kiosk starts again (it turns the picture itself too)
+        if is_service_active(KIOSK_SERVICE):
+            await asyncio.to_thread(restart_kiosk_browser, False)
 
     error = "\n".join(e for e in errors if e)
     url = "/settings" + (f"?error={quote(error)}" if error else "")
@@ -1097,12 +1128,12 @@ async def save_settings(request: Request):
 
 KIOSK_PROFILE = os.path.join(str(system.state_root()), "kiosk-browser")   # deploy/chromium-kiosk.sh
 
-def restart_kiosk_browser():
+def restart_kiosk_browser(clear_cache: bool = True):
     """Clear the kiosk browser's stored copies of pages and close it; the kiosk service starts it again.
 
     The browser runs as this app's user, so no extra rights are needed. Returns what was done."""
     cleared = 0
-    for sub in ("Cache", "Code Cache", "GPUCache", "Service Worker"):
+    for sub in ("Cache", "Code Cache", "GPUCache", "Service Worker") if clear_cache else ():
         path = os.path.join(KIOSK_PROFILE, "Default", sub)
         if os.path.isdir(path):
             shutil.rmtree(path, ignore_errors=True)
@@ -1374,7 +1405,9 @@ async def get_lyrics(artist: str = "", title: str = "", album: str = "", duratio
 @app.get("/api/screen")
 async def get_screen():
     """Is the Pi's own screen on? (for Home Assistant)"""
-    return {"on": screen["on"], "changed": screen["changed"], "switched_off_by_hand": screen["hold_off"]}
+    rotation = load_config().get("screen_rotation", "normal")
+    return {"on": screen["on"], "changed": screen["changed"], "switched_off_by_hand": screen["hold_off"],
+            "rotation": rotation, "transform": _WAYLAND_TRANSFORM.get(rotation, "normal")}
 
 @app.post("/api/screen")
 async def set_screen(request: Request):

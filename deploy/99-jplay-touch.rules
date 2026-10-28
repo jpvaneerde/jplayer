@@ -1,0 +1,3 @@
+# Touch screens turn with the picture (Settings → Screen rotation): the display app writes the libinput
+# calibration matrix to this file; install.sh puts in the real state folder.
+ACTION=="add|change", SUBSYSTEM=="input", ENV{ID_INPUT_TOUCHSCREEN}=="1", IMPORT{file}="/var/lib/jplay/display/touch-rotation.env"
