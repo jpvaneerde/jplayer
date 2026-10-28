@@ -235,7 +235,7 @@
             <label>Hub address</label>
             <input type="text" name="hub" value="{{ config.hub }}" placeholder="Empty: find it on the network">
             <p style="font-size: 0.8rem; color: #9ca3af; margin: 6px 0 0;">
-                {% if hub_found and hub_found.startswith('http://127.') %}Hub: this Pi (<a href="/" onclick="this.href = location.protocol + '//' + location.hostname + ':8090/'">open the hub</a>){% elif hub_found %}Hub: <a href="{{ hub_found }}/">{{ hub_found }}</a>{% else %}<span style="color: #fca5a5;">No hub found.</span> Make one unit the hub (sudo bash deploy/install.sh --role …,hub) or type its address.{% endif %}
+                {% if hub_found and hub_found.startswith('http://127.') %}Hub: this Pi (<a href="/" onclick="this.href = location.protocol === 'https:' ? 'https://' + location.hostname.split('.').slice(1).join('.') + '/' : location.protocol + '//' + location.hostname + ':8090/'">open the hub</a>){% elif hub_found %}Hub: <a href="{{ hub_found }}/">{{ hub_found }}</a>{% else %}<span style="color: #fca5a5;">No hub found.</span> Make one unit the hub (sudo bash deploy/install.sh --role …,hub) or type its address.{% endif %}
                 {% if config.room %}<br>Status: {{ report.queued }} waiting to be sent · last sent {{ report_seen.last_ok }}{% else %}<br>Give the room a name to report its plays.{% endif %}
                 {% if report.last_error %}<br><span style="color: #fca5a5;">Last error: {{ report.last_error }}</span>{% endif %}
             </p>

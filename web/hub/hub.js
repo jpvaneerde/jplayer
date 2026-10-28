@@ -54,9 +54,9 @@ function ago(ms) {
 }
 
 function header(page) {
-  const links = [['/', 'Spins'], ['/lyrics', 'Lyrics'], ['/settings', 'Settings']];
+  const links = [['/', 'Home'], ['/spins', 'Spins'], ['/lyrics', 'Lyrics'], ['/settings', 'Settings']];
   document.body.insertAdjacentHTML('afterbegin', `<header><a href="#" class="back" id="back-display" hidden>‹ Display</a>
-    <div class="brand"><img src="/static/icon.svg" alt="">JPlay hub</div>
+    <div class="brand"><img src="/static/icon.svg" alt=""><span>JPlay hub</span></div>
     <nav>${links.map(([h, t]) => `<a href="${h}" class="${h === page ? 'on' : ''}">${t}</a>`).join('')}</nav>
     <button class="theme-btn" id="theme-btn" aria-label="Theme"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18zm0 2v14a7 7 0 0 0 0-14z" fill-rule="evenodd"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/></svg></button></header>`);
   const themeBtn = $('theme-btn');
@@ -77,12 +77,22 @@ function header(page) {
   const back = $('back-display');
   let from = null;
   try { from = sessionStorage.getItem('jplay-display'); } catch (e) { /* no storage: fine */ }
-  const ref = document.referrer && /:5000\//.test(document.referrer) ? new URL(document.referrer).origin + '/' : null;
+  // Came from a display (http://<pi>:5000 or https://<room>-display.<domain>): back to that one
+  const ref = document.referrer && (/:5000\//.test(document.referrer) || /^https:\/\/[^/]*display\./.test(document.referrer))
+    ? new URL(document.referrer).origin + '/' : null;
   if (ref) { from = ref; try { sessionStorage.setItem('jplay-display', ref); } catch (e) { /* ignore */ } }
   if (from) { back.href = from; back.hidden = false; }
   else {
     api('/api/info').then((i) => {
-      if ((i.roles || []).includes('display')) { back.href = `${location.protocol}//${location.hostname}:5000/`; back.hidden = false; }
+      // The display on this Pi: its HTTPS address when HTTPS is on, else this Pi's own address
+      if (i.display_url) { back.href = i.display_url; back.hidden = false; }
+      else if ((i.roles || []).includes('display') && location.protocol === 'http:') {
+        back.href = `${location.protocol}//${location.hostname}:5000/`; back.hidden = false;
+      }
     }).catch(() => {});
+  }
+  // An installable app (Add to Home Screen / Install app): the service worker (only over HTTPS or on localhost)
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
   }
 }

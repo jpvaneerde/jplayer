@@ -13,6 +13,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -23,7 +25,7 @@ from ..common import no_stale_pages, system
 from ..common.announce import HUB_TYPE, Announcer
 from ..common import sysupdates
 from ..common.updates import UpdateError
-from . import db, importer, lyrics, records, records_sync, spins
+from . import db, devices, https, importer, lyrics, records, records_sync, spins
 
 log = logging.getLogger(__name__)
 WEB_DIR = system.WEB_DIR / "hub"
@@ -31,6 +33,7 @@ PORT = 8090
 STATS_CACHE_SECONDS = 600        # totals for a year or more are worked out at most every 10 minutes
 PROCESS_EVERY = 20               # seconds between runs of the Spins worker
 SYNC_EVERY = 60                  # send new and changed plays to JPlay Records (when that's on)
+HTTPS_EVERY = 6 * 3600           # renew certificates when due, follow new devices (https.py)
 REMATCH_EVERY = 6 * 3600         # match "heard" plays to your records again (JPlay Records connected)
 
 
@@ -62,6 +65,18 @@ class LyricsFix(BaseModel):
 class RecordsBody(BaseModel):
     url: str = ""
     token: str | None = None        # empty/None = keep the saved token
+
+
+class ControlBody(BaseModel):
+    action: str
+    value: Any = None
+
+
+class HttpsBody(BaseModel):
+    domain: str
+    duckdns: str
+    token: str | None = None        # empty/None: keep the saved token
+    email: str = ""
 
 
 class SyncBody(BaseModel):
@@ -100,10 +115,14 @@ async def _worker() -> None:
     """Turn events into plays every few seconds; now and then match plays to your records again."""
     await asyncio.to_thread(spins.merge_duplicates)
     last_rematch = last_sync = 0.0
+    last_https = asyncio.get_running_loop().time() - HTTPS_EVERY + 60   # first look a minute after start
     loop = asyncio.get_running_loop()
     while True:
         try:
             await asyncio.to_thread(spins.process_events)
+            if loop.time() - last_https > HTTPS_EVERY:
+                last_https = loop.time()
+                await asyncio.to_thread(https.maintain)
             if records_sync.enabled() and loop.time() - last_sync > SYNC_EVERY:
                 last_sync = loop.time()
                 await asyncio.to_thread(records_sync.sync_once)
@@ -144,6 +163,7 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
     async def lifespan(app: FastAPI):
         db.init(str(data_dir / "hub.db"))
         lyrics.init()
+        app.state.http = httpx.AsyncClient()
         tasks = [asyncio.create_task(_worker(), name="spins"), asyncio.create_task(_auto_update(app), name="update")]
         announcer = Announcer(_name(), port, {"id": records_sync.hub_key(), "version": app_version(), "path": "/api"},
                               HUB_TYPE) if announce else None
@@ -157,6 +177,7 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
                 t.cancel()
             if announcer:
                 await announcer.shutdown()
+            await app.state.http.aclose()
             db.close()
 
     app = FastAPI(title="JPlay hub", version=__version__, lifespan=lifespan, docs_url="/api/docs",
@@ -182,9 +203,85 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
     # ------------------------------------------------------------ for the displays
     @app.get("/api/info")
     async def info() -> dict:
+        hs = await t(https.settings)
+        here = await t(_display_here, hs)
         return {"id": await t(records_sync.hub_key), "name": _name(), "version": app_version(), "kind": "hub",
-                "records": records.enabled(),
-                "roles": system.roles()}
+                "records": records.enabled(), "roles": system.roles(),
+                "https": hs["domain"] if hs["enabled"] else None, "display_url": here}
+
+    def _display_here(hs):
+        """The display on this Pi (for the ‹ Display button): its HTTPS address when that is on."""
+        if "display" not in system.roles():
+            return None
+        if hs["enabled"]:
+            own = devices.own_address()
+            d = next((x for x in devices.devices() if x["kind"] == "display" and x["address"] == own), None)
+            if d:
+                return devices.open_url(d, hs["domain"])
+        return None
+
+    # ------------------------------------------------------------ every device in the house (the Home page)
+    @app.get("/api/devices")
+    async def api_devices() -> dict:
+        devs = await devices.overview(app.state.http)
+        hs = await t(https.settings)
+        for d in devs:
+            d["url"] = devices.open_url(d, hs["domain"] if hs["enabled"] else None)
+        return {"devices": devs, "rooms": await t(spins.now_playing)}
+
+    @app.post("/api/devices/{device_id}/control")
+    async def api_control(device_id: str, body: ControlBody) -> dict:
+        try:
+            return await devices.control(app.state.http, device_id, body.action, body.value)
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            raise HTTPException(502, f"The device didn't do it: {e}")
+
+    @app.get("/api/devices/{device_id}/art")
+    async def api_art(device_id: str, path: str):
+        try:
+            data, ctype = await devices.art(app.state.http, device_id, path)
+        except Exception:
+            raise HTTPException(404, "No art")
+        return Response(data, media_type=ctype, headers={"Cache-Control": "public, max-age=86400"})
+
+    # ------------------------------------------------------------ HTTPS (https.py)
+    @app.get("/api/https")
+    async def api_https() -> dict:
+        return await t(https.view)
+
+    @app.put("/api/https")
+    async def api_https_save(body: HttpsBody) -> dict:
+        try:
+            await t(https.save, body.domain, body.duckdns, body.token, body.email)
+        except https.HttpsError as e:
+            raise HTTPException(400, str(e))
+        return await t(https.view)
+
+    @app.post("/api/https/enable")
+    async def api_https_enable(staging: bool = False) -> dict:
+        if https.status["state"] == "working":
+            raise HTTPException(409, "Already busy")
+        s = await t(https.settings)
+        if not (s["domain"] and s["duckdns"] and s["token_set"]):
+            raise HTTPException(400, "Fill in the address, the DuckDNS name and its token first")
+        https.status.update(state="working", message="Starting", log=[])
+
+        async def run():
+            try:
+                await t(https.obtain, staging)
+            except Exception:
+                pass
+        asyncio.create_task(run())
+        return await t(https.view)
+
+    @app.post("/api/https/disable")
+    async def api_https_disable() -> dict:
+        await t(https.disable)
+        return await t(https.view)
 
     @app.get("/api/health")
     async def health() -> dict:
@@ -398,8 +495,23 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
 
     # ------------------------------------------------------------ pages
     @app.get("/", response_class=HTMLResponse)
+    async def page_home(request: Request):
+        if "room" in request.query_params:          # displays from before 1.1 link to /?room=… for Spins
+            return RedirectResponse(f"/spins?{request.url.query}", status_code=302)
+        return FileResponse(WEB_DIR / "home.html")
+
+    @app.get("/spins", response_class=HTMLResponse)
     async def page_spins():
         return FileResponse(WEB_DIR / "index.html")
+
+    @app.get("/manifest.webmanifest", include_in_schema=False)
+    async def manifest():
+        return FileResponse(WEB_DIR / "manifest.webmanifest", media_type="application/manifest+json")
+
+    @app.get("/sw.js", include_in_schema=False)
+    async def service_worker():
+        # At the root, so it may look after the whole app (an installed app needs one)
+        return FileResponse(WEB_DIR / "sw.js", media_type="text/javascript", headers={"Service-Worker-Allowed": "/"})
 
     @app.get("/lyrics", response_class=HTMLResponse)
     async def page_lyrics():

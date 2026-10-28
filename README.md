@@ -115,7 +115,10 @@ One Pi in the house (any role mix). The displays find it on the network by thems
 its address in a display's Settings only if they don't. While the hub is away, the displays keep their reports in
 an outbox (two weeks) and use their own copy of the lyrics or ask LRCLIB themselves.
 
-- **Spins** (`http://<hub>:8090/`): what plays in each room now, the records you put on, every play by day (filter
+- **Home** (`http://<hub>:8090/`): every room in one place: what each player plays, play/pause, next, standby
+  and volume, the screen of the room's display on or off, and links to each player's and display's own page. The
+  hub passes the controls on, so a phone only needs to reach the hub.
+- **Spins** (`/spins`): what plays in each room now, the records you put on, every play by day (filter
   by kind, room, search), and totals: records put on, hours of vinyl, songs streamed, listening time per station,
   top artists and records. The rules are JPlay Records' rules: a song heard in several rooms at once is one play,
   in the room with the highest priority; while the room's player plays, a song is filed under its source (a CD in
@@ -138,6 +141,28 @@ covers of your records once with the same token. This needs the endpoints added 
 token (`server/index.ts`).
 
 There are no passwords: like the players and displays, the hub is for your home network only.
+
+### Secure address and the phone app (optional)
+
+With a name of your own (here `home.jplay.cloud`) the hub gets a real certificate, and then the Home page can be
+installed as an app on phones (Android: ⋮ → *Install app*; iPhone: Share → *Add to Home Screen*). Every player and
+display gets its own secure name below it: `https://lounge.home.jplay.cloud`, `https://lounge-display.home.jplay.cloud`.
+Nothing is opened to the internet: the names only point at the hub inside the house.
+
+1. **At your DNS host** (Strato, …): a CNAME `_acme-challenge.home` → `<name>.duckdns.org.` Make the free DuckDNS
+   name at [duckdns.org](https://www.duckdns.org) (its address doesn't matter). Let's Encrypt checks this record;
+   the hub puts the proof on DuckDNS with the DuckDNS token, so your DNS host needs no API.
+2. **In your router's DNS**: `home.jplay.cloud` and every name below it → the hub's address. On a MikroTik:
+   `/ip dns static add name=home.jplay.cloud address=192.168.1.224` and
+   `/ip dns static add regexp=".*\\.home\\.jplay\\.cloud\$" address=192.168.1.224`. Give the hub a fixed address
+   (a static DHCP lease). Phones must use the router for DNS (no private DNS / "secure DNS" overriding it).
+3. **On the hub**, Settings → *Secure address*: the address, the DuckDNS name and its token, then *Get certificates
+   and switch on* (two certificates, a few minutes). They renew by themselves 30 days before they run out; a new
+   player or display gets its name within a few hours (or press *Renew now*).
+
+The token is kept on the hub only (`/var/lib/jplay/hub/https/duckdns.token`, readable by JPlay alone). nginx (put on
+the hub by the installer) serves the certificates on ports 80 and 443 and passes each name on; the plain addresses
+(`:8080`, `:5000`, `:8090`) keep working.
 
 ## Updates
 

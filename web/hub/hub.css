@@ -112,3 +112,13 @@ header .theme-btn svg { width: 17px; height: 17px; fill: currentColor; }
 .sys-btn:disabled { opacity: 0.5; }
 .sys-log { font-size: 0.75rem; white-space: pre-wrap; color: var(--muted); }
 .sys-check { display: flex; gap: 8px; align-items: flex-start; margin-top: 12px; font-size: 0.9rem; }
+
+/* Phones: the hub's name shrinks to its icon and the menu scrolls sideways when it still doesn't fit */
+header nav { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+header nav::-webkit-scrollbar { display: none; }
+@media (max-width: 520px) {
+  header .brand span, header .brand .name { display: none; }
+  header .brand { margin-right: 4px; }
+  header nav a { padding: 6px 10px; }
+  header .back { display: none; }
+}

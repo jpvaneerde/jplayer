@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>JPlay</title>
+<link rel="icon" href="/static/icon.svg">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#0f111a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="JPlay">
+<link rel="stylesheet" href="/static/hub.css">
+<script>try { var t = localStorage.getItem('jplay.theme'); } catch (e) {} document.documentElement.className = /^(dark|light|retro)$/.test(t || '') ? t : 'dark';</script>
+<style>
+  .players { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .player { display: flex; flex-direction: column; gap: 12px; }
+  .player .top { display: flex; gap: 12px; align-items: center; }
+  .player .art { width: 84px; height: 84px; border-radius: 12px; object-fit: cover; background: var(--card2); flex: none; }
+  .player .name { font-weight: 800; font-size: 1.05rem; }
+  .player .song { font-weight: 700; }
+  .controls { display: flex; gap: 8px; align-items: center; }
+  .controls button { width: 44px; height: 44px; padding: 0; border-radius: 999px; display: grid; place-items: center; }
+  .controls button.play { width: 52px; height: 52px; background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .controls svg { width: 20px; height: 20px; fill: currentColor; }
+  .controls .grow { flex: 1; }
+  .vol { width: 100%; accent-color: var(--accent); }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line);
+          background: var(--card2); font-size: 0.85rem; font-weight: 700; text-decoration: none; color: var(--text); cursor: pointer; }
+  .chip.on { border-color: var(--accent); color: var(--accent); }
+  .offline { opacity: 0.55; }
+  .src { font-size: 0.75em; font-weight: 700; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; color: var(--muted); }
+  .src.playing { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h2>Rooms</h2>
+  <div class="players" id="players"><div class="muted">Looking for the players…</div></div>
+  <div id="others"></div>
+  <p class="muted small" id="foot"></p>
+</main>
+<script src="/static/hub.js"></script>
+<script>
+header('/');
+const ICON = {
+  prev: '<svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>',
+  next: '<svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>',
+  play: '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>',
+  power: '<svg viewBox="0 0 24 24"><path d="M11 3h2v10h-2zm6.6 2.6 1.4 1.4A8 8 0 1 1 5 7l1.4-1.4A6 6 0 1 0 17.6 5.6z"/></svg>',
+};
+const SOURCE = { radio: 'Radio', plex: 'Plex', cd: 'CD', spotify: 'Spotify', bluetooth: 'Bluetooth' };
+let data = null, busy = false, volTimer = null;
+
+async function control(id, action, value) {
+  busy = true;
+  try { await api(`/api/devices/${encodeURIComponent(id)}/control`, { method: 'POST', body: { action, value } }); }
+  catch (e) { toast(e.message); }
+  busy = false;
+  setTimeout(load, 400);
+}
+
+function displayFor(player, displays) {
+  const n = player.name.toLowerCase();
+  return displays.find((d) => (d.room || '').toLowerCase() === n || d.name.toLowerCase() === `${n} display`);
+}
+
+function playerCard(p, disp) {
+  const s = p.state || {};
+  const on = p.online && s;
+  const song = s.source ? (s.title || SOURCE[s.source] || '') : 'Standby';
+  const by = s.source ? [s.artist, s.source === 'radio' && s.station && s.station !== s.title ? s.station : s.album].filter(Boolean).join(' · ') : 'Nothing playing';
+  return `<div class="card player ${on ? '' : 'offline'}" data-id="${esc(p.id)}">
+    <div class="top">
+      <img class="art" src="${esc(s.art || '/static/icon.svg')}" alt="" onerror="this.onerror=null; this.src='/static/icon.svg'">
+      <div class="grow" style="min-width:0">
+        <div class="row" style="gap:8px"><span class="name">${esc(p.name)}</span>
+          ${s.source ? `<span class="src ${s.playing ? 'playing' : ''}">${esc(SOURCE[s.source] || s.source)}</span>` : ''}
+          ${on ? '' : '<span class="src">offline</span>'}</div>
+        <div class="song ellipsis">${esc(song)}</div>
+        <div class="muted ellipsis small">${esc(by)}</div>
+      </div>
+    </div>
+    ${on ? `<div class="controls">
+      <button data-act="previous" aria-label="Previous" ${s.source ? '' : 'disabled'}>${ICON.prev}</button>
+      <button class="play" data-act="toggle" aria-label="${s.playing ? 'Pause' : 'Play'}" ${s.source ? '' : 'disabled'}>${s.playing ? ICON.pause : ICON.play}</button>
+      <button data-act="next" aria-label="Next" ${s.source ? '' : 'disabled'}>${ICON.next}</button>
+      <span class="grow"></span>
+      <button data-act="standby" aria-label="Standby" title="Standby" ${s.source ? '' : 'disabled'}>${ICON.power}</button>
+    </div>
+    ${s.volume_available ? `<input class="vol" type="range" min="0" max="100" value="${s.volume ?? 0}" aria-label="Volume">` : ''}` : ''}
+    <div class="chips">
+      <a class="chip" href="${esc(p.url)}">Open player ↗</a>
+      ${disp ? displayChips(disp) : ''}
+    </div>
+  </div>`;
+}
+
+function displayChips(d) {
+  const on = d.state && d.state.screen_on;
+  return `${d.online && d.state ? `<span class="chip ${on ? 'on' : ''}" data-screen="${esc(d.id)}" data-on="${on ? 1 : 0}">Screen ${on ? 'on' : 'off'}</span>` : ''}
+    <a class="chip" href="${esc(d.url)}">${esc(d.name)} ↗</a>`;
+}
+
+function draw() {
+  const players = data.devices.filter((d) => d.kind === 'player');
+  const displays = data.devices.filter((d) => d.kind === 'display');
+  const used = new Set();
+  $('players').innerHTML = players.length ? players.map((p) => {
+    const disp = displayFor(p, displays);
+    if (disp) used.add(disp.id);
+    return playerCard(p, disp);
+  }).join('') : '<div class="muted">No players found on the network yet.</div>';
+  const rest = displays.filter((d) => !used.has(d.id));
+  $('others').innerHTML = rest.length ? `<h2>Displays</h2><div class="card chips">${rest.map(displayChips).join('')}</div>` : '';
+  $('foot').textContent = `${players.length} player${players.length === 1 ? '' : 's'} and ${displays.length} display${displays.length === 1 ? '' : 's'} on the network.`;
+}
+
+async function load() {
+  if (busy) return;
+  try { data = await api('/api/devices'); draw(); } catch (e) { /* keep showing the last state */ }
+}
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-act]');
+  if (b) { control(b.closest('[data-id]').dataset.id, b.dataset.act); return; }
+  const s = e.target.closest('[data-screen]');
+  if (s) control(s.dataset.screen, 'screen', s.dataset.on !== '1');
+});
+document.addEventListener('input', (e) => {
+  if (!e.target.classList.contains('vol')) return;
+  const id = e.target.closest('[data-id]').dataset.id, v = Number(e.target.value);
+  busy = true;
+  clearTimeout(volTimer);
+  volTimer = setTimeout(async () => { await control(id, 'volume', v); }, 250);
+});
+load();
+setInterval(() => { if (document.visibilityState === 'visible') load(); }, 4000);
+</script>
+</body>
+</html>

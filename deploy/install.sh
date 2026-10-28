@@ -61,6 +61,14 @@ units() {
   systemctl daemon-reload
 }
 
+nginx_include() {
+  # The hub writes its HTTPS settings to $STATE/hub/https/nginx.conf (hub/https.py); nginx reads them from there
+  if [[ -d /etc/nginx/conf.d ]]; then
+    printf '# JPlay hub: the secure address (written by the hub, see its Settings)\ninclude %s/hub/https/nginx*.conf;\n' "$STATE" \
+      > /etc/nginx/conf.d/jplay.conf
+  fi
+}
+
 sudoers() {
   # Exactly what the apps may do as root: start their updaters, switch the kiosk and SSH, restart. Nothing else.
   local tmp; tmp="$(mktemp)"
@@ -71,6 +79,7 @@ jplay ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block jplayer-system-ch
 jplay ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now jplay-kiosk, /usr/bin/systemctl disable --now jplay-kiosk
 jplay ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now ssh, /usr/bin/systemctl disable --now ssh
 jplay ALL=(root) NOPASSWD: /usr/sbin/reboot, /usr/sbin/shutdown
+jplay ALL=(root) NOPASSWD: /usr/sbin/nginx -t -q, /usr/bin/systemctl reload-or-restart nginx
 SUDO
   visudo -cf "$tmp" >/dev/null
   install -m 440 "$tmp" /etc/sudoers.d/jplay
@@ -81,7 +90,15 @@ if [[ -n "$UNITS_ONLY" ]]; then
   # The updater runs this after an update that changed the systemd files: put them, the sudo rules and the
   # updaters' units in place (nothing else changes)
   units
-  [[ -f /etc/jplay/roles ]] && { sudoers; bash "$REPO/deploy/install-updater.sh"; }
+  if [[ -f /etc/jplay/roles ]]; then
+    # A hub that came from an older version: nginx for the secure address
+    if has hub && ! command -v nginx >/dev/null; then
+      apt-get install -y -q --no-install-recommends nginx >/dev/null 2>&1 || echo "Couldn't install nginx"
+    fi
+    sudoers; nginx_include
+    has hub && systemctl enable --now nginx >/dev/null 2>&1
+    bash "$REPO/deploy/install-updater.sh"
+  fi
   exit 0
 fi
 
@@ -96,6 +113,8 @@ has player && [[ -z "${SKIP_BLUETOOTH:-}" ]] && pkgs+=(bluez bluez-tools bluez-a
 # The display: the microphone (PortAudio), radio recognition (ffmpeg), and the screen: cage + Chromium, with
 # fonts for every script (Japanese, Korean and Chinese lyrics) and emoji
 has display && pkgs+=(libportaudio2 ffmpeg cage wlr-randr fonts-noto-core fonts-noto-cjk)
+# The hub: nginx serves the secure address (https://home.<your domain>) once it is switched on in its Settings
+has hub && pkgs+=(nginx)
 # A fresh Pi may still be installing its own updates: wait for that, and finish an install that was cut off
 for i in $(seq 1 60); do
   fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1 || break
@@ -228,6 +247,7 @@ fi
 
 # ------------------------------------------------------------------ sudo: exactly what the apps may do as root
 sudoers
+has hub && nginx_include && systemctl enable --now nginx >/dev/null 2>&1 || true
 
 # ------------------------------------------------------------------ updates
 say "Updates"

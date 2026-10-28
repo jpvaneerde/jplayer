@@ -24,7 +24,7 @@ display = [
     "jinja2>=3.1", "python-multipart>=0.0.9", "shazamio>=0.6", "sounddevice>=0.4", "numpy>=1.24",
     "audioop-lts; python_version >= '3.13'",   # shazamio needs audioop, which Python 3.13 removed
 ]
-hub = ["jinja2>=3.1", "python-multipart>=0.0.9"]
+hub = ["jinja2>=3.1", "python-multipart>=0.0.9", "certbot>=2.0", "dnspython>=2.4"]   # certbot + dnspython: HTTPS (hub/https.py)
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 
 [project.scripts]

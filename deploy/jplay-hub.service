@@ -1,4 +1,4 @@
-# Installed by deploy/install.sh (also after updates that change it).
+# Installed by deploy/install.sh (also after updates that change it: the sudo rules and nginx too).
 [Unit]
 Description=JPlay hub (the house's plays and lyrics)
 Documentation=https://github.com/jpvaneerde/jplayer

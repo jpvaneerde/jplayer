@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JPlay Spins</title>
 <link rel="icon" href="/static/icon.svg">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#0f111a">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="stylesheet" href="/static/hub.css">
 <script>try { var t = localStorage.getItem('jplay.theme'); } catch (e) {} document.documentElement.className = /^(dark|light|retro)$/.test(t || '') ? t : 'dark';</script>
 </head>
@@ -42,7 +46,7 @@
 </main>
 <script src="/static/hub.js"></script>
 <script>
-header('/');
+header('/spins');
 const KIND = { vinyl: 'Vinyl', cd: 'CD', cassette: 'Cassette', radio: 'Radio', plex: 'Plex', spotify: 'Spotify',
                bluetooth: 'Bluetooth', file: 'Stream', stream: 'Stream' };
 const state = { kind: '', room: new URLSearchParams(location.search).get('room') || '', q: '', offset: 0, plays: [], total: 0, days: 30, records: false };

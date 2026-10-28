@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Settings · JPlay hub</title>
 <link rel="icon" href="/static/icon.svg">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#0f111a">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="stylesheet" href="/static/hub.css">
 <script>try { var t = localStorage.getItem('jplay.theme'); } catch (e) {} document.documentElement.className = /^(dark|light|retro)$/.test(t || '') ? t : 'dark';</script>
 </head>
@@ -74,6 +78,38 @@
       <button data-import="favourites">Copy</button>
     </div>
     <div id="imp-status" class="small" style="margin-top: 12px;"></div>
+  </div>
+
+  <h2>Secure address (HTTPS)</h2>
+  <div class="card" id="https-card">
+    <p class="muted small" style="margin-top: 0;">One address for the whole house with a real certificate, so JPlay can be
+      installed as an app on phones: the hub on <b>https://home.jplay.cloud</b>, every player and display on its own
+      name under it (lounge.home.jplay.cloud, lounge-display.home.jplay.cloud). Certificates come from Let's Encrypt
+      through DuckDNS and renew by themselves.</p>
+    <label for="hs-domain">Address</label>
+    <input id="hs-domain" placeholder="home.jplay.cloud" style="width: 100%;">
+    <label for="hs-duck">DuckDNS name</label>
+    <input id="hs-duck" placeholder="jplayer (for jplayer.duckdns.org)" style="width: 100%;">
+    <label for="hs-token">DuckDNS token</label>
+    <input id="hs-token" type="password" autocomplete="off" style="width: 100%;">
+    <label for="hs-email">E-mail for Let's Encrypt (optional: warnings if renewing fails)</label>
+    <input id="hs-email" type="email" style="width: 100%;">
+    <div class="row" style="margin-top: 12px;">
+      <button id="hs-save">Save</button>
+      <button class="primary" id="hs-go">Get certificates and switch on</button>
+      <button id="hs-off" class="danger" hidden>Switch off</button>
+    </div>
+    <div id="hs-status" class="small" style="margin-top: 12px;"></div>
+    <details style="margin-top: 12px;"><summary class="small muted">What has to be set up for this</summary>
+      <ol class="small muted">
+        <li>At your DNS host (Strato): a CNAME <code>_acme-challenge.<span class="hs-d">home.jplay.cloud</span></code> →
+          <code><span class="hs-n">jplayer</span>.duckdns.org</code>.</li>
+        <li>In your router's DNS: <code class="hs-d">home.jplay.cloud</code> <b>and every name under it</b> → this hub
+          (<code id="hs-ip">…</code>). On a MikroTik: IP → DNS → Static, two entries: Name <code class="hs-d">home.jplay.cloud</code>,
+          and Regexp <code>.*\.<span class="hs-dre">home\.jplay\.cloud</span>$</code>, both with this address.</li>
+        <li>Give this hub a fixed address in the router (DHCP: make the lease static).</li>
+      </ol>
+    </details>
   </div>
 
   <h2>Version &amp; updates</h2>
@@ -226,7 +262,49 @@ const saveUpd = async () => { await api('/api/update/settings', { method: 'PUT',
 $('upd-channel').addEventListener('change', saveUpd);
 $('upd-auto').addEventListener('change', saveUpd);
 
-loadRooms(); loadRecords(); importStatus(); loadUpdate();
+// ---- HTTPS
+let hsTimer;
+async function loadHttps() {
+  clearTimeout(hsTimer);
+  let h;
+  try { h = await api('/api/https'); } catch (e) { return; }
+  if (document.activeElement?.id?.startsWith('hs-') !== true) {
+    $('hs-domain').value = h.domain; $('hs-duck').value = h.duckdns; $('hs-email').value = h.email;
+  }
+  $('hs-token').placeholder = h.token_set ? 'Saved (leave empty to keep it)' : 'From duckdns.org (top of the page)';
+  $('hs-ip').textContent = h.address;
+  document.querySelectorAll('.hs-d').forEach((e) => { e.textContent = h.domain || 'home.jplay.cloud'; });
+  document.querySelectorAll('.hs-dre').forEach((e) => { e.textContent = (h.domain || 'home.jplay.cloud').replace(/\./g, '\\.'); });
+  document.querySelectorAll('.hs-n').forEach((e) => { e.textContent = h.duckdns || 'jplayer'; });
+  $('hs-off').hidden = !h.enabled;
+  $('hs-go').disabled = h.state === 'working' || !h.nginx;
+  $('hs-go').textContent = h.enabled ? 'Renew now' : 'Get certificates and switch on';
+  const cert = (c) => c ? `valid ${c.days_left} more days` : 'not yet';
+  const lines = [];
+  if (!h.nginx) lines.push('<span class="err">nginx isn\'t installed on this Pi: run sudo bash /opt/jplayer/deploy/install.sh once more.</span>');
+  if (h.state === 'working') lines.push(`Working: ${esc(h.message)}`);
+  else if (h.state === 'failed') lines.push(`<span class="err">${esc(h.message)}</span>`);
+  else if (h.enabled) lines.push(`<span class="ok">On</span> · certificates: ${cert(h.certificates.home)} (hub), ${cert(h.certificates.devices)} (devices)`);
+  if (h.enabled && h.addresses.length) lines.push(h.addresses.map((a) => `<a href="${esc(a.url)}">${esc(a.url.replace('https://', '').replace(/\/$/, ''))}</a> <span class="muted">(${esc(a.name)})</span>`).join('<br>'));
+  if ((h.state === 'working' || h.state === 'failed') && h.log.length) lines.push(`<pre class="muted" style="white-space:pre-wrap">${esc(h.log.join('\n'))}</pre>`);
+  $('hs-status').innerHTML = lines.join('<br>');
+  hsTimer = setTimeout(loadHttps, h.state === 'working' ? 2000 : 30000);
+}
+async function saveHttps() {
+  await api('/api/https', { method: 'PUT', body: { domain: $('hs-domain').value.trim(), duckdns: $('hs-duck').value.trim(),
+    token: $('hs-token').value.trim() || null, email: $('hs-email').value.trim() } });
+  $('hs-token').value = '';
+}
+$('hs-save').addEventListener('click', async () => { try { await saveHttps(); toast('Saved'); loadHttps(); } catch (e) { toast(e.message); } });
+$('hs-go').addEventListener('click', async () => {
+  try { await saveHttps(); await api('/api/https/enable', { method: 'POST' }); loadHttps(); } catch (e) { toast(e.message); }
+});
+$('hs-off').addEventListener('click', async () => {
+  if (!confirm('Switch the secure address off? The certificates are kept; switching on again is quick.')) return;
+  try { await api('/api/https/disable', { method: 'POST' }); loadHttps(); } catch (e) { toast(e.message); }
+});
+
+loadRooms(); loadRecords(); importStatus(); loadUpdate(); loadHttps();
 </script>
 </body>
 </html>

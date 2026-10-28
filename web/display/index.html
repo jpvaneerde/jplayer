@@ -164,6 +164,12 @@
     <script>
         const THEMES = ['dark', 'light', 'retro'];
 
+        // The hub's address as seen from here: on the secure address (lounge-display.home.jplay.cloud) the hub is
+        // home.jplay.cloud; on this Pi's own hub it's port 8090; else the address the hub was found on.
+        function hubOrigin(hub) {
+            if (location.protocol === 'https:' && location.hostname.split('.').length > 2) return `https://${location.hostname.split('.').slice(1).join('.')}`;
+            return hub.here ? `${location.protocol}//${location.hostname}:8090` : hub.url;
+        }
         function esc(value) {
             return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         }
@@ -399,7 +405,7 @@
                 document.getElementById('history-pill').hidden = !!data.hub;
                 if (data.hub) {
                     const room = (data.config && data.config.room) ? `?room=${encodeURIComponent(data.config.room)}` : '';
-                    spinsPill.href = (data.hub.here ? `${location.protocol}//${location.hostname}:8090/` : `${data.hub.url}/`) + room;
+                    spinsPill.href = `${hubOrigin(data.hub)}/spins${room}`;
                 }
                 clock = active && p.duration ? { pos: p.position || 0, dur: p.duration, at: performance.now(), running: p.playing } : { dur: 0 };
                 tick();
