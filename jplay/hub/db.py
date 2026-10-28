@@ -85,6 +85,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS plays_import ON plays (import_id) WHERE import
 CREATE INDEX IF NOT EXISTS plays_started ON plays (started_at);
 CREATE INDEX IF NOT EXISTS plays_key ON plays (song_key, started_at);
 CREATE INDEX IF NOT EXISTS plays_instance ON plays (instance_id, started_at);
+CREATE INDEX IF NOT EXISTS plays_kind ON plays (kind, started_at);
 
 -- Listening time per room and source (radio sessions are counted even when no song is known).
 CREATE TABLE IF NOT EXISTS room_sessions (

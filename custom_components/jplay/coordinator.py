@@ -3,6 +3,7 @@
 - A JPlay player pushes its state over a WebSocket (/api/v1/events) the moment anything changes; every 30 s the
   coordinator also reads the radio favourites and the DACs, and the status again in case the WebSocket is down.
 - JPlaying Now is asked every 5 seconds.
+- The hub is asked every 30 seconds (what plays in each room, today's totals, the last record put on).
 """
 from __future__ import annotations
 
@@ -141,3 +142,30 @@ class NowCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update = None                  # a display without the update API
         dashboard.pop("config", None)  # settings (and their tokens) aren't needed here
         return {"dashboard": dashboard, "screen": dashboard.get("screen"), "screen_status": screen_status, "update": update}
+
+
+class HubCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """data = {"info": /api/info, "rooms": /api/now rooms, "today": /api/stats since midnight, "spin": last spin,
+    "update": /api/update or None}"""
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, api: ApiClient) -> None:
+        super().__init__(hass, _LOGGER, config_entry=entry, name=f"{DOMAIN} {entry.title}",
+                         update_interval=timedelta(seconds=30))
+        self.api = api
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        midnight = dt_util.start_of_local_day()
+        try:
+            info, now = await asyncio.gather(self.api.get("/api/info"), self.api.get("/api/now"))
+        except JPlayError as err:
+            raise UpdateFailed(str(err)) from err
+        today, spins, update = await asyncio.gather(
+            self.api.get(f"/api/stats?days=1&since={int(midnight.timestamp() * 1000)}"),
+            self.api.get("/api/spins?limit=1"), self.api.get("/api/update"), return_exceptions=True)
+        return {
+            "info": info,
+            "rooms": now.get("rooms") or [],
+            "today": today if isinstance(today, dict) else (self.data or {}).get("today") or {},
+            "spin": ((spins.get("spins") or [None])[0]) if isinstance(spins, dict) else (self.data or {}).get("spin"),
+            "update": update if isinstance(update, dict) else None,
+        }

@@ -15,8 +15,8 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import JPlayError
-from .const import KIND_PLAYER
-from .entity import NowEntity, PlayerEntity
+from .const import KIND_HUB, KIND_PLAYER
+from .entity import HubEntity, NowEntity, PlayerEntity
 
 INSTALL_TIMEOUT = 20 * 60
 # How far an update is, by the updater's step
@@ -27,6 +27,8 @@ PERCENT = {"starting": 5, "fetching": 15, "applying": 35, "packages": 55, "resta
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback) -> None:
     if entry.runtime_data.kind == KIND_PLAYER:
         async_add_entities([PlayerUpdate(entry)])
+    elif entry.runtime_data.kind == KIND_HUB:
+        async_add_entities([HubUpdate(entry)])
     else:
         async_add_entities([NowUpdate(entry)])
 
@@ -117,3 +119,11 @@ class NowUpdate(_Update, NowEntity, UpdateEntity):
 
     def __init__(self, entry) -> None:
         NowEntity.__init__(self, entry, "update")
+
+
+class HubUpdate(_Update, HubEntity, UpdateEntity):
+    _attr_title = "JPlay hub"
+    install_path = "/api/update/install"
+
+    def __init__(self, entry) -> None:
+        HubEntity.__init__(self, entry, "update")

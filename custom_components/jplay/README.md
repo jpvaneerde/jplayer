@@ -49,7 +49,18 @@ every second.
 | Heard | The song the microphone last recognised (records, CDs). |
 | Update | The display's version and the newest release, with release notes and Install. |
 
-**Updates:** each player and display has an update entity. Settings → Updates lists the ones with a new release;
+**The JPlay hub** (found by itself too, or **Add integration → JPlay → JPlay hub**, port 8090):
+
+| Entity | What it does |
+| --- | --- |
+| *Room* now playing | Per room: what plays now ("Prince – Let's Go Crazy"), the station, or Quiet, with the cover as picture. Attributes: title, artist, album, kind (record, stream, heard), source, station, which of your records. A new room gets its sensor by itself. |
+| *Room* display | Per room: whether its display reports to the hub. |
+| Records put on today, Songs played today | Today's counts (from midnight). |
+| Radio and streams today, Vinyl today | Hours today. |
+| Last record put on | The last record or CD, with its cover, room and number of tracks. |
+| Update | The version of the hub's Pi and its newest release. |
+
+**Updates:** each player, display and hub has an update entity. Settings → Updates lists the ones with a new release;
 Install asks the device's own updater, which restarts the app and goes back to the previous version if it doesn't
 start (an error then says so). Updates started on the device itself show their progress here too. Install appears
 once the updater is set up on the device (deploy/install.sh does that). A player and a display on the same Pi share

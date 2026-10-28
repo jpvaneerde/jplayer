@@ -1,4 +1,4 @@
-"""JPlay for Home Assistant: JPlay players and JPlaying Now displays.
+"""JPlay for Home Assistant: JPlay players, JPlaying Now displays and the JPlay hub.
 
 Each config entry is one device. Its `kind` says which of the two it is.
 """
@@ -14,13 +14,14 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import ApiClient, JPlayError
-from .const import CONF_KIND, KIND_NOW, KIND_PLAYER, NOW_PORT, PLAYER_PORT
-from .coordinator import NowCoordinator, PlayerCoordinator
+from .const import CONF_KIND, HUB_PORT, KIND_HUB, KIND_NOW, KIND_PLAYER, NOW_PORT, PLAYER_PORT
+from .coordinator import HubCoordinator, NowCoordinator, PlayerCoordinator
 
 PLATFORMS: dict[str, list[Platform]] = {
     KIND_PLAYER: [Platform.MEDIA_PLAYER, Platform.SELECT, Platform.SENSOR, Platform.BINARY_SENSOR,
                   Platform.BUTTON, Platform.SWITCH, Platform.UPDATE],
     KIND_NOW: [Platform.SWITCH, Platform.SELECT, Platform.SENSOR, Platform.UPDATE],
+    KIND_HUB: [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.UPDATE],
 }
 
 
@@ -44,6 +45,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: JPlayConfigEntry) -> boo
         except JPlayError as err:
             raise ConfigEntryNotReady(str(err)) from err
         coordinator: Any = PlayerCoordinator(hass, entry, api, info)
+    elif kind == KIND_HUB:
+        api = ApiClient(session, f"http://{entry.data[CONF_HOST]}:{entry.data.get(CONF_PORT, HUB_PORT)}")
+        coordinator = HubCoordinator(hass, entry, api)
     else:
         api = ApiClient(session, f"http://{entry.data[CONF_HOST]}:{entry.data.get(CONF_PORT, NOW_PORT)}")
         coordinator = NowCoordinator(hass, entry, api)

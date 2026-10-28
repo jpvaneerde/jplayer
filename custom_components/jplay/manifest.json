@@ -10,9 +10,10 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/jpvaneerde/jplayer/issues",
   "requirements": [],
-  "version": "2.0.0",
+  "version": "2.1.0",
   "zeroconf": [
     "_jplay._tcp.local.",
-    "_jplay-display._tcp.local."
+    "_jplay-display._tcp.local.",
+    "_jplay-hub._tcp.local."
   ]
 }

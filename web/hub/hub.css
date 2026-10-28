@@ -1,13 +1,26 @@
-:root { --bg: #0f111a; --card: rgba(255,255,255,0.05); --card2: rgba(255,255,255,0.09); --line: rgba(255,255,255,0.1);
-        --text: #f3f4f6; --muted: #9aa3b5; --accent: #10b981; --warn: #f59e0b; --bad: #f87171;
-        --vinyl: #f59e0b; --cd: #60a5fa; --stream: #a78bfa; --heard: #9aa3b5; }
-@media (prefers-color-scheme: light) {
-  :root { --bg: #f4f5f7; --card: #fff; --card2: #eef0f3; --line: #e2e5ea; --text: #111827; --muted: #5b6474;
-          --vinyl: #b45309; --cd: #2563eb; --stream: #7c3aed; --heard: #6b7280; }
+/* The same family as the player and the display: deep night background, emerald accent.
+   Themes: dark (default), light, retro: a class on <html>, picked with the button at the top right. */
+:root, html.dark {
+  --bg: #0f111a; --card: rgba(255,255,255,0.05); --card2: rgba(255,255,255,0.09); --line: rgba(255,255,255,0.09);
+  --text: #ffffff; --muted: #9aa1b2; --accent: #10b981; --accent-ink: #052e22; --warn: #f5b83d; --bad: #f87171;
+  --vinyl: #f5b83d; --cd: #60a5fa; --stream: #a78bfa; --heard: #9aa1b2; --shadow: 0 10px 25px rgba(0,0,0,0.3);
+  color-scheme: dark;
+}
+html.light {
+  --bg: #f3f4f6; --card: #ffffff; --card2: #eef0f3; --line: #e5e7eb;
+  --text: #111827; --muted: #6b7280; --accent: #059669; --accent-ink: #ffffff; --warn: #d97706; --bad: #dc2626;
+  --vinyl: #b45309; --cd: #2563eb; --stream: #7c3aed; --heard: #6b7280; --shadow: 0 10px 25px rgba(17,24,39,0.08);
+  color-scheme: light;
+}
+html.retro {
+  --bg: #1c1917; --card: rgba(245,158,11,0.06); --card2: rgba(245,158,11,0.11); --line: rgba(245,158,11,0.16);
+  --text: #fbbf24; --muted: #b08a4a; --accent: #f59e0b; --accent-ink: #1c1917; --warn: #fde68a; --bad: #fb7185;
+  --vinyl: #fde68a; --cd: #fbbf24; --stream: #f59e0b; --heard: #b08a4a; --shadow: 0 10px 25px rgba(0,0,0,0.4);
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 400 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 a { color: inherit; }
 header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line);
          display: flex; align-items: center; gap: 4px; padding: 10px 16px; overflow-x: auto; }
@@ -36,7 +49,7 @@ h2:first-child { margin-top: 4px; }
 .dot.on { background: var(--accent); }
 button, .btn { font: inherit; font-weight: 700; color: var(--text); background: var(--card2); border: 1px solid var(--line);
                border-radius: 10px; padding: 7px 14px; cursor: pointer; text-decoration: none; display: inline-block; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 button.danger { color: var(--bad); }
 button:disabled { opacity: 0.5; cursor: default; }
 input, select, textarea { font: inherit; color: var(--text); background: var(--card2); border: 1px solid var(--line);
@@ -81,3 +94,7 @@ th { color: var(--muted); font-size: 0.8em; }
 .roomrow .fmts { display: flex; flex-wrap: wrap; gap: 4px 0; }
 header .back { text-decoration: none; font-weight: 700; color: var(--text); background: var(--card2); border: 1px solid var(--line);
                 border-radius: 999px; padding: 6px 12px; margin-right: 10px; white-space: nowrap; }
+header .theme-btn { margin-left: auto; width: 36px; height: 36px; flex: none; display: grid; place-items: center; padding: 0;
+                     border-radius: 999px; background: var(--card); border: 1px solid var(--line); color: var(--muted); }
+header .theme-btn svg { width: 17px; height: 17px; fill: currentColor; }
+.card { box-shadow: var(--shadow); }

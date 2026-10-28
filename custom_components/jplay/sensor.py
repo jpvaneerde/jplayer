@@ -7,8 +7,9 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import KIND_PLAYER, SOURCE_NAMES
+from .const import KIND_HUB, KIND_PLAYER, SOURCE_NAMES
 from .entity import NowEntity, PlayerEntity, song
+from .hub import LastRecordSensor, RoomNowPlaying, add_room_entities, today_sensors
 
 STANDBY = "Standby"
 CD_STATES = {"empty": "No disc", "reading-toc": "Reading", "ready": "Ready", "data": "Data disc", "error": "Error"}
@@ -19,6 +20,9 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
     if kind == KIND_PLAYER:
         async_add_entities([SourceSensor(entry), NowPlayingSensor(entry), StationSensor(entry), FormatSensor(entry),
                             BluetoothDeviceSensor(entry), CdSensor(entry)])
+    elif kind == KIND_HUB:
+        async_add_entities([*today_sensors(entry), LastRecordSensor(entry)])
+        add_room_entities(entry, async_add_entities, lambda e, room: [RoomNowPlaying(e, room)])
     else:
         async_add_entities([ShowingSensor(entry), HeardSensor(entry)])
 

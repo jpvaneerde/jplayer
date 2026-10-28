@@ -406,3 +406,65 @@ async def test_player_without_update_api(hass: HomeAssistant, socket_enabled):
             await hass.config_entries.async_unload(e.entry_id)
     finally:
         await runner.cleanup()
+
+
+class FakeHub:
+    def __init__(self):
+        self.rooms = [
+            {"room": "Lounge", "online": True, "session": None,
+             "play": {"title": "Let's Go Crazy", "artist": "Prince", "album": "Purple Rain", "kind": "physical",
+                      "detail": "vinyl", "station": None, "cover": "https://records.example/covers/7-s.webp",
+                      "record": {"id": 7, "artist": "Prince", "title": "Purple Rain", "year": 1984}}},
+            {"room": "Study", "online": False, "session": {"mode": "radio", "station": "P3", "started_at": 1}, "play": None},
+        ]
+        self.update = fake_update_status("1.0.3", "1.0.3")
+        app = web.Application()
+        app.router.add_get("/api/info", lambda r: web.json_response({"id": "h1", "name": "JPlay hub", "kind": "hub", "version": "1.0.3"}))
+        app.router.add_get("/api/now", lambda r: web.json_response({"rooms": self.rooms}))
+        app.router.add_get("/api/stats", lambda r: web.json_response({
+            "physical": {"spins": 2, "tracks": 9, "vinyl_hours": 1.25}, "streamed": {"tracks": 14}, "heard": {"tracks": 3},
+            "listening_hours": 2.5}))
+        app.router.add_get("/api/spins", lambda r: web.json_response({"spins": [
+            {"room": "Lounge", "medium": "vinyl", "tracks": 5, "started_at": 1_760_000_000_000,
+             "record": {"artist": "Prince", "title": "Purple Rain", "year": 1984, "cover": "https://records.example/covers/7-s.webp"}}]}))
+        app.router.add_get("/api/update", lambda r: web.json_response(self.update))
+        self.app = app
+
+
+async def test_hub(hass: HomeAssistant, socket_enabled):
+    fake = FakeHub()
+    runner, port = await serve(fake.app)
+    try:
+        r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        r = await hass.config_entries.flow.async_configure(r["flow_id"], {"next_step_id": "hub"})
+        r = await hass.config_entries.flow.async_configure(r["flow_id"], {"host": "127.0.0.1", "port": port})
+        assert r["type"] is FlowResultType.CREATE_ENTRY and r["title"] == "JPlay hub", r
+        await hass.async_block_till_done()
+        lounge = hass.states.get("sensor.jplay_hub_lounge_now_playing")
+        assert lounge.state == "Prince – Let's Go Crazy"
+        assert lounge.attributes["kind"] == "record" and lounge.attributes["source"] == "Record"
+        assert lounge.attributes["record"] == "Prince – Purple Rain"
+        assert lounge.attributes["entity_picture"].endswith("/api/cover?u=https%3A%2F%2Frecords.example%2Fcovers%2F7-s.webp")
+        assert hass.states.get("sensor.jplay_hub_study_now_playing").state == "P3"
+        assert hass.states.get("binary_sensor.jplay_hub_lounge_display").state == "on"
+        assert hass.states.get("binary_sensor.jplay_hub_study_display").state == "off"
+        assert hass.states.get("sensor.jplay_hub_records_put_on_today").state == "2"
+        assert hass.states.get("sensor.jplay_hub_songs_played_today").state == "26"
+        assert float(hass.states.get("sensor.jplay_hub_radio_and_streams_today").state) == 2.5
+        assert hass.states.get("sensor.jplay_hub_last_record_put_on").state == "Prince – Purple Rain"
+        assert hass.states.get("update.jplay_hub").attributes["installed_version"] == "1.0.3"
+        # A new room (a new display) gets its entities by itself
+        fake.rooms.append({"room": "Kitchen", "online": True, "session": None, "play": None})
+        entry = hass.config_entries.async_entries(DOMAIN)[0]
+        await entry.runtime_data.coordinator.async_refresh()
+        await hass.async_block_till_done()
+        assert hass.states.get("sensor.jplay_hub_kitchen_now_playing").state == "Quiet"
+        # Found on the network as well: the same hub, not a second one
+        info = ZeroconfServiceInfo(ip_address=ip_address("127.0.0.1"), ip_addresses=[ip_address("127.0.0.1")],
+                                   hostname="hub.local.", name="JPlay hub._jplay-hub._tcp.local.", port=port,
+                                   type="_jplay-hub._tcp.local.", properties={"id": "h1"})
+        r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_ZEROCONF}, data=info)
+        assert r["type"] is FlowResultType.ABORT and r["reason"] == "already_configured"
+        assert await hass.config_entries.async_unload(entry.entry_id)
+    finally:
+        await runner.cleanup()

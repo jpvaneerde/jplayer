@@ -8,10 +8,15 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import KIND_HUB
 from .entity import PlayerEntity
+from .hub import RoomDisplayOnline, add_room_entities
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback) -> None:
+    if entry.runtime_data.kind == KIND_HUB:
+        add_room_entities(entry, async_add_entities, lambda e, room: [RoomDisplayOnline(e, room)])
+        return
     async_add_entities([
         PlayerBinary(entry, "playing", "Playing", "mdi:play-circle", BinarySensorDeviceClass.RUNNING,
                      lambda e: bool(e.active) and e.np.get("state") in ("playing", "loading")),

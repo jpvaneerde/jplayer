@@ -1,4 +1,13 @@
 // Shared by the hub's pages.
+
+// Theme before anything is drawn (this script loads at the end of <body>, the <head> snippet sets it earlier)
+const THEMES = [['dark', 'Dark'], ['light', 'Light'], ['retro', 'Retro']];
+function currentTheme() {
+  let t = null;
+  try { t = localStorage.getItem('jplay.theme'); } catch (e) { /* private mode */ }
+  return THEMES.some(([id]) => id === t) ? t : 'dark';
+}
+document.documentElement.className = currentTheme();
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -48,7 +57,21 @@ function header(page) {
   const links = [['/', 'Spins'], ['/lyrics', 'Lyrics'], ['/settings', 'Settings']];
   document.body.insertAdjacentHTML('afterbegin', `<header><a href="#" class="back" id="back-display" hidden>‹ Display</a>
     <div class="brand"><img src="/static/icon.svg" alt="">JPlay hub</div>
-    <nav>${links.map(([h, t]) => `<a href="${h}" class="${h === page ? 'on' : ''}">${t}</a>`).join('')}</nav></header>`);
+    <nav>${links.map(([h, t]) => `<a href="${h}" class="${h === page ? 'on' : ''}">${t}</a>`).join('')}</nav>
+    <button class="theme-btn" id="theme-btn" aria-label="Theme"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18zm0 2v14a7 7 0 0 0 0-14z" fill-rule="evenodd"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/></svg></button></header>`);
+  const themeBtn = $('theme-btn');
+  const label = () => {
+    const i = THEMES.findIndex(([id]) => id === document.documentElement.className);
+    themeBtn.title = `Theme: ${THEMES[i][1]} (tap for ${THEMES[(i + 1) % THEMES.length][1].toLowerCase()})`;
+  };
+  label();
+  themeBtn.addEventListener('click', () => {
+    const i = THEMES.findIndex(([id]) => id === document.documentElement.className);
+    const t = THEMES[(i + 1) % THEMES.length][0];
+    document.documentElement.className = t;
+    try { localStorage.setItem('jplay.theme', t); } catch (e) { /* private mode */ }
+    label();
+  });
   // Back to the display: the one this page was opened from, else the one on this Pi (on the Pi's own screen
   // there is no browser Back button)
   const back = $('back-display');

@@ -20,6 +20,7 @@ from jplay.player.core.models import PlayState
 from jplay.player.core.mpv import MpvEngine
 from jplay.player.core.store import StateStore
 from jplay.player.core.volume import Volume
+from jplay.player.sources.base import SourceError
 from jplay.player.sources.plex import PlexSource
 from tests.player.fake_plex import create_app
 
@@ -101,3 +102,98 @@ async def test_play_album_next_and_scrobble(plex):
     # let the last track play out: it is scrobbled and the source stops
     await wait_for(lambda: source.np.state == PlayState.STOPPED, timeout=12)
     await wait_for(lambda: "1013" in app.state.scrobbles)
+
+
+async def test_connecting_from_the_web_page(fake_plex, tmp_path: Path):
+    """Plex → Connect: a wrong address is refused and nothing is saved; a working one is saved and kept."""
+    url, _ = fake_plex
+    cfg = load_config(None)
+    store = StateStore(tmp_path / "s.json")
+
+    async def make():
+        ctx = AppContext(config=cfg, store=store, hub=EventHub(), engine=MpvEngine("mpv", "null", [], tmp_path),
+                         volume=Volume("", ""), http=httpx.AsyncClient(), state_dir=tmp_path, runtime_dir=tmp_path)
+        src = PlexSource(ctx)
+        ctx.manager = SourceManager(ctx, [src])
+        await ctx.manager.start()
+        return ctx, src
+
+    ctx, src = await make()
+    assert src.connection()["token_set"] is False and not src.available
+    with pytest.raises(SourceError) as err:
+        await src.configure("http://127.0.0.1:9", "tok")
+    assert err.value.status == 400 and "Can't reach" in str(err.value)
+    assert store.get("plex.connection") is None
+    host = url.split("://")[1]                       # "127.0.0.1:port", typed without http://
+    c = await src.configure(host, "tok")
+    assert c["connected"] and c["url"] == url and c["from"] == "web" and "token" not in c
+    assert src.available and (await src.libraries())
+    await ctx.manager.shutdown()
+    await ctx.http.aclose()
+
+    ctx, src = await make()                          # after a restart: still connected
+    assert src.connection()["url"] == url and src.available
+    c = await src.configure(url, None)               # same token, kept
+    assert c["connected"]
+    c = await src.configure("", None)                # disconnect
+    assert not c["token_set"] and not src.available and store.get("plex.connection") is None
+    await ctx.manager.shutdown()
+    await ctx.http.aclose()
+
+
+async def test_signing_in_with_plex(fake_plex, tmp_path: Path, monkeypatch):
+    """Sign in with Plex (plex.tv faked): approve, pick the server, and the player connects to its local address."""
+    import plexapi.myplex as myplex
+
+    url, _ = fake_plex
+    port = int(url.rsplit(":", 1)[1])
+    state = {"approved": False}
+
+    class Pin:
+        def __init__(self, oauth=False, headers=None):
+            assert oauth and headers["X-Plex-Product"] == "JPlay"
+            self.token = None
+
+        def oauthUrl(self):
+            return "https://app.plex.tv/auth#?code=abc"
+
+        def checkLogin(self):
+            if state["approved"]:
+                self.token = "account-token"
+            return state["approved"]
+
+    class Conn:
+        def __init__(self, address, port, local, relay=False):
+            self.address, self.port, self.local, self.relay = address, port, local, relay
+            self.uri = f"https://{address.replace('.', '-')}.abc.plex.direct:{port}"
+
+    class Res:
+        name, clientIdentifier, owned, provides, accessToken = "Music NAS", "srv1", True, "server", "server-token"
+        connections = [Conn("203.0.113.5", 32400, False), Conn("127.0.0.1", port, True), Conn("10.0.0.9", 1, False, True)]
+
+    class Account:
+        def __init__(self, token):
+            assert token == "account-token"
+
+        def resources(self):
+            return [Res()]
+
+    monkeypatch.setattr(myplex, "MyPlexPinLogin", Pin)
+    monkeypatch.setattr(myplex, "MyPlexAccount", Account)
+    ctx = AppContext(config=load_config(None), store=StateStore(tmp_path / "s.json"), hub=EventHub(),
+                     engine=MpvEngine("mpv", "null", [], tmp_path), volume=Volume("", ""), http=httpx.AsyncClient(),
+                     state_dir=tmp_path, runtime_dir=tmp_path)
+    src = PlexSource(ctx)
+    ctx.manager = SourceManager(ctx, [src])
+    await ctx.manager.start()
+    assert (await src.sign_in_start())["url"].startswith("https://app.plex.tv/auth")
+    assert await src.sign_in_check() == {"done": False}
+    state["approved"] = True
+    found = await src.sign_in_check()
+    assert found["done"] and found["servers"][0]["name"] == "Music NAS" and "token" not in found["servers"][0]
+    assert found["servers"][0]["urls"][0] == url                      # the local address first, no relay
+    c = await src.sign_in_choose("srv1")
+    assert c["connected"] and c["url"] == url
+    assert ctx.store.get("plex.connection") == {"url": url, "token": "server-token"}
+    await ctx.manager.shutdown()
+    await ctx.http.aclose()

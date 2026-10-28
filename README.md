@@ -50,8 +50,8 @@ Chromium, ffmpeg, PortAudio and fonts for every script for the display), creates
 
 Then:
 
-- **Player:** add your Plex address and token to `/etc/jplay/config.toml` (`sudo nano /etc/jplay/config.toml`, then
-  `sudo systemctl restart jplay-player`). A USB DAC needs nothing; for a DAC board such as the HiFiBerry DAC2 HD add
+- **Player:** open `http://<pi>:8080`, tab **Plex**: **Sign in with Plex** and pick your server, or type its address
+  and token. (Or set `plex.url` and `plex.token` in `/etc/jplay/config.toml`; what you connect on the page wins.) A USB DAC needs nothing; for a DAC board such as the HiFiBerry DAC2 HD add
   `dtoverlay=hifiberry-dacplushd` and `dtparam=audio=off` to `/boot/firmware/config.txt` and reboot.
 - **Display:** open `http://<pi>:5000/settings`: add the players, and under **Room & hub** give the room a name and
   pick the room's player. From then on it reports to the hub.

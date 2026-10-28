@@ -2,6 +2,10 @@
 
 Tracks are streamed direct (no transcoding), so FLAC stays FLAC all the way to the DAC.
 python-plexapi is synchronous, so every call runs in a worker thread.
+
+The server's address and token come from the player's web page (Plex → Connect, kept in the state file), or from
+plex.url / plex.token in the config file. The web page can also sign in with a Plex account (as a TV app does:
+approve on plex.tv, and the player gets a token of its own) and then pick one of the account's servers.
 """
 from __future__ import annotations
 
@@ -20,6 +24,9 @@ from .engine_source import EngineSource
 log = logging.getLogger(__name__)
 
 MUSIC_TYPES = ("artist", "album", "track")
+SETTINGS_KEY = "plex.connection"     # {"url", "token"} saved from the web page; wins over the config file
+CLIENT_ID_KEY = "plex.client_id"
+PIN_TIMEOUT = 10 * 60               # seconds a sign-in may take
 PLEX_TYPE = {"artist": 8, "album": 9, "track": 10}
 
 
@@ -59,9 +66,14 @@ class PlexSource(EngineSource):
 
     def __init__(self, ctx):
         super().__init__(ctx)
-        self.url = (self.cfg.get("url") or "").rstrip("/")
-        self.token = self.cfg.get("token") or ""
+        saved = ctx.store.get(SETTINGS_KEY) or {}
+        self.url = ((saved.get("url") if saved else self.cfg.get("url")) or "").rstrip("/")
+        self.token = (saved.get("token") if saved else self.cfg.get("token")) or ""
+        self.from_web = bool(saved)
         self._server: Any = None
+        self.last_error = ""
+        self._pin: Any = None              # a sign-in with Plex in progress
+        self._pin_started = 0.0
         self._connect_lock = asyncio.Lock()
         self.queue: list[dict[str, Any]] = []
         self.queue_index: int | None = None
@@ -75,7 +87,7 @@ class PlexSource(EngineSource):
             self.set_available(False, reason)
             return
         if not (self.url and self.token):
-            self.set_available(False, "Set plex.url and plex.token in the config")
+            self.set_available(False, "Not connected to a Plex server yet: Plex → Connect")
             return
         self.set_available(True)
         asyncio.create_task(self._probe())
@@ -83,7 +95,9 @@ class PlexSource(EngineSource):
     async def _probe(self) -> None:
         try:
             await self.server()
+            self.last_error = ""
         except SourceError as exc:
+            self.last_error = str(exc)
             log.warning("Plex not reachable yet: %s", exc)
 
     async def server(self) -> Any:
@@ -112,6 +126,150 @@ class PlexSource(EngineSource):
             if exc.__class__.__name__ == "NotFound":
                 raise SourceError("Not found in Plex", 404) from exc
             raise SourceError(f"Plex request failed: {exc}", 502) from exc
+
+    # ------------------------------------------------------------ connecting from the web page
+    def connection(self) -> dict[str, Any]:
+        """What Plex → Connect shows. The token itself never leaves the Pi."""
+        return {
+            "url": self.url,
+            "token_set": bool(self.token),
+            "connected": self._server is not None,
+            "server": self.server_name,
+            "error": self.last_error,
+            "from": "web" if self.from_web else ("config" if self.url else ""),
+            "signing_in": self._pin is not None,
+        }
+
+    @staticmethod
+    def _connect_sync(url: str, token: str) -> Any:
+        from plexapi.server import PlexServer
+
+        return PlexServer(url, token, timeout=10)
+
+    async def configure(self, url: str, token: str | None) -> dict[str, Any]:
+        """Connect to this server (token None = keep the current one); saved only when the connection works.
+        An empty address disconnects (the config file's settings, if any, are used again after a restart)."""
+        url = (url or "").strip().rstrip("/")
+        if url and not url.startswith(("http://", "https://")):
+            url = "http://" + url
+        if url and ":" not in url.split("://", 1)[1]:
+            url += ":32400"
+        token = self.token if token is None else token.strip()
+        if not url:
+            await self._drop()
+            self.ctx.store.set(SETTINGS_KEY, None)
+            self.url, self.token, self.from_web, self.server_name, self.last_error = "", "", False, "", ""
+            self.set_available(False, "Not connected to a Plex server yet: Plex → Connect")
+            return self.connection()
+        if not token:
+            raise SourceError("Give the Plex token (or sign in with Plex)", 400)
+        try:
+            server = await asyncio.to_thread(self._connect_sync, url, token)
+        except Exception as exc:
+            msg = str(exc)
+            if "401" in msg or "Unauthorized" in msg:
+                raise SourceError("Plex doesn't accept this token", 400) from exc
+            raise SourceError(f"Can't reach a Plex server at {url}: {msg[:200]}", 400) from exc
+        await self._drop()
+        self.url, self.token, self._server, self.from_web = url, token, server, True
+        self.server_name, self.last_error = server.friendlyName, ""
+        self.ctx.store.set(SETTINGS_KEY, {"url": url, "token": token})
+        log.info("Connected to Plex server '%s' at %s", self.server_name, url)
+        self.set_available(True)
+        self.ctx.manager.notify(True)
+        return self.connection()
+
+    async def _drop(self) -> None:
+        """Forget the current server (stop playing from it first)."""
+        if self.active:
+            await self.ctx.manager.deactivate_all()
+        self._server = None
+        self.queue, self.queue_index = [], None
+
+    # Sign in with Plex: the player asks plex.tv for a sign-in page, you approve it there, and the player gets a
+    # token of its own (it shows up in Plex → Settings → Authorized Devices as "JPlay <name>").
+    def _client_id(self) -> str:
+        cid = self.ctx.store.get(CLIENT_ID_KEY)
+        if not cid:
+            import secrets
+
+            cid = "jplay-" + secrets.token_hex(8)
+            self.ctx.store.set(CLIENT_ID_KEY, cid)
+        return cid
+
+    def _plex_headers(self) -> dict[str, str]:
+        name = self.ctx.config["server"]["name"]
+        return {"X-Plex-Client-Identifier": self._client_id(), "X-Plex-Product": "JPlay",
+                "X-Plex-Device-Name": f"JPlay {name}", "X-Plex-Device": "Raspberry Pi", "X-Plex-Platform": "Linux"}
+
+    async def sign_in_start(self) -> dict[str, Any]:
+        import time
+
+        from plexapi.myplex import MyPlexPinLogin
+
+        def start():
+            pin = MyPlexPinLogin(oauth=True, headers=self._plex_headers())
+            return pin, pin.oauthUrl()
+        try:
+            self._pin, url = await asyncio.to_thread(start)
+        except Exception as exc:
+            raise SourceError(f"Can't reach plex.tv: {exc}", 502) from exc
+        self._pin_started = time.time()
+        return {"url": url}
+
+    async def sign_in_check(self) -> dict[str, Any]:
+        """Has the sign-in been approved? Then: {"done": True, "servers": [...]} to pick from."""
+        import time
+
+        if self._pin is None:
+            raise SourceError("No sign-in in progress", 409)
+        if time.time() - self._pin_started > PIN_TIMEOUT:
+            self._pin = None
+            raise SourceError("The sign-in took too long; start again", 409)
+        try:
+            ok = await asyncio.to_thread(self._pin.checkLogin)
+        except Exception as exc:
+            raise SourceError(f"Can't reach plex.tv: {exc}", 502) from exc
+        if not ok:
+            return {"done": False}
+        token = self._pin.token
+        self._pin = None
+        servers = await asyncio.to_thread(self._servers_for, token)
+        self._signed_in_token = token
+        # (the servers' tokens stay on the Pi)
+        return {"done": True, "servers": [{k: v for k, v in x.items() if k != "token"} for x in servers]}
+
+    def _servers_for(self, token: str) -> list[dict[str, Any]]:
+        """The Plex servers this account can use, with the addresses to try (local ones first)."""
+        from plexapi.myplex import MyPlexAccount
+
+        account = MyPlexAccount(token=token)
+        out = []
+        for res in account.resources():
+            if "server" not in (res.provides or ""):
+                continue
+            conns = sorted(res.connections or [], key=lambda c: (not c.local, c.relay))
+            urls = [f"http://{c.address}:{c.port}" if c.local and c.address else c.uri for c in conns if not c.relay]
+            out.append({"name": res.name, "id": res.clientIdentifier, "owned": bool(res.owned),
+                        "urls": list(dict.fromkeys(urls)), "token": res.accessToken or token})
+        return out
+
+    async def sign_in_choose(self, server_id: str) -> dict[str, Any]:
+        """Connect to one of the servers found after signing in: the first of its addresses that answers."""
+        token = getattr(self, "_signed_in_token", None)
+        if not token:
+            raise SourceError("Sign in with Plex first", 409)
+        servers = await asyncio.to_thread(self._servers_for, token)
+        server = next((s for s in servers if s["id"] == server_id), None)
+        if not server:
+            raise SourceError("That server isn't on this Plex account", 404)
+        last = None
+        for url in server["urls"]:
+            try:
+                return await self.configure(url, server["token"])
+            except SourceError as exc:
+                last = exc
+        raise last or SourceError("None of the server's addresses answer", 502)
 
     def details(self) -> dict[str, Any]:
         return {

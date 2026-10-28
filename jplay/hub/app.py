@@ -8,6 +8,7 @@ import asyncio
 import contextlib
 import logging
 import socket
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,7 @@ from . import db, importer, lyrics, records, records_sync, spins
 log = logging.getLogger(__name__)
 WEB_DIR = system.WEB_DIR / "hub"
 PORT = 8090
+STATS_CACHE_SECONDS = 600        # totals for a year or more are worked out at most every 10 minutes
 PROCESS_EVERY = 20               # seconds between runs of the Spins worker
 SYNC_EVERY = 60                  # send new and changed plays to JPlay Records (when that's on)
 REMATCH_EVERY = 6 * 3600         # match "heard" plays to your records again (JPlay Records connected)
@@ -138,7 +140,8 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
         db.init(str(data_dir / "hub.db"))
         lyrics.init()
         tasks = [asyncio.create_task(_worker(), name="spins"), asyncio.create_task(_auto_update(app), name="update")]
-        announcer = Announcer(_name(), port, {"version": app_version(), "path": "/api"}, HUB_TYPE) if announce else None
+        announcer = Announcer(_name(), port, {"id": records_sync.hub_key(), "version": app_version(), "path": "/api"},
+                              HUB_TYPE) if announce else None
         if announcer:
             await announcer.start()
         log.info("JPlay hub ready on port %s (data in %s)", port, data_dir)
@@ -159,6 +162,8 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
         v = app.state.updates.version()["version"]
         return __version__ if v in ("unknown", "") else v
 
+    stats_cache: dict[int, tuple[float, dict]] = {}
+
     def t(fn, *a, **kw):
         return asyncio.to_thread(fn, *a, **kw)
 
@@ -169,7 +174,8 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
     # ------------------------------------------------------------ for the displays
     @app.get("/api/info")
     async def info() -> dict:
-        return {"name": _name(), "version": app_version(), "kind": "hub", "records": records.enabled(),
+        return {"id": await t(records_sync.hub_key), "name": _name(), "version": app_version(), "kind": "hub",
+                "records": records.enabled(),
                 "roles": system.roles()}
 
     @app.get("/api/health")
@@ -205,8 +211,17 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
         return {"spins": await t(spins.recent_spins, max(1, min(limit, 100)), room)}
 
     @app.get("/api/stats")
-    async def api_stats(days: int = 30) -> dict:
-        return await t(spins.stats, max(0, days))
+    async def api_stats(days: int = 30, since: int | None = None) -> dict:
+        days = max(0, days)
+        if since is not None or 0 < days <= 31:
+            return await t(spins.stats, days, since)
+        # A year or everything: seconds of work after years of listening, so kept for a few minutes
+        hit = stats_cache.get(days)
+        if hit and time.monotonic() - hit[0] < STATS_CACHE_SECONDS:
+            return hit[1]
+        result = await t(spins.stats, days)
+        stats_cache[days] = (time.monotonic(), result)
+        return result
 
     @app.put("/api/plays/{play_id}")
     async def fix_play(play_id: int, body: PlayFix) -> dict:

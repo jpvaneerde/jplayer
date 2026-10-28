@@ -353,10 +353,10 @@ const plex = {
   update() {
     const s = source("plex");
     if (!s.available) {
-      if (this.sig !== "off") { this.sig = "off"; this.el.replaceChildren(unavailable(s)); }
+      if (this.sig !== "off") { this.sig = "off"; this.render(); }
       return;
     }
-    if (this.sig === "off") { this.sig = null; this.render(); }
+    if (this.sig === "off") { this.sig = null; this.stack = [{ view: "home" }]; this.render(); }
     // highlight the playing track without redrawing
     const key = isActive("plex") ? S.now_playing.extra?.key : null;
     for (const row of this.el.querySelectorAll("[data-key]")) row.classList.toggle("now", row.dataset.key === key);
@@ -368,7 +368,15 @@ const plex = {
   pop() { this.stack.pop(); this.render(); },
   async render() {
     const s = source("plex");
-    if (!s.available) { this.el.replaceChildren(unavailable(s)); this.sig = "off"; return; }
+    if (!s.available) {
+      this.sig = "off";
+      // Not connected to a server: connect here. (Missing mpv is something else: say that.)
+      if (/mpv/i.test(s.reason || "")) { this.el.replaceChildren(unavailable(s)); return; }
+      const body = h("div");
+      this.el.replaceChildren(body);
+      await this.connectView(body, s);
+      return;
+    }
     const v = this.top();
     const token = Symbol();
     this.token = token;
@@ -376,6 +384,7 @@ const plex = {
     this.el.replaceChildren(body);
     try {
       if (v.view === "home") await this.home(body, token);
+      else if (v.view === "connect") { body.append(h("button", { class: "btn quiet back", onclick: () => this.pop() }, "Back")); await this.connectView(body, s); }
       else await this.detail(body, v, token);
     } catch (err) {
       if (this.token === token) body.replaceChildren(h("div", { class: "notice" }, h("strong", {}, "Plex didn't answer"), String(err.message || err)));
@@ -396,7 +405,9 @@ const plex = {
       ? h("div", { class: "seg", role: "group", "aria-label": "Library" }, ...libs.map((l) => h("button", { "aria-pressed": String(l.key === this.section), onclick: () => { this.section = l.key; localStorage.setItem("jplay.plex.section", l.key); this.render(); } }, l.title)))
       : null;
     const content = h("div", { style: "margin-top:16px" }, h("p", { class: "empty" }, "Loading…"));
-    body.append(...kids(form, libPick ? h("div", { style: "margin-bottom:10px" }, libPick) : null, seg, content));
+    body.append(...kids(form, libPick ? h("div", { style: "margin-bottom:10px" }, libPick) : null, seg, content,
+      h("p", { class: "hint", style: "margin-top:28px" }, `Plex server: ${source("plex").details?.server || "connected"} · `,
+        h("a", { href: "#", onclick: (e) => { e.preventDefault(); this.push({ view: "connect" }); } }, "Connect to another"))));
 
     if (this.seg === "recent") {
       const items = await api("GET", `/plex/recent?section=${this.section}`);
@@ -427,6 +438,66 @@ const plex = {
             h("span", { class: "num" }, i + 1), h("div", { class: "body" }, h("div", { class: "name" }, t.title), h("div", { class: "meta" }, `${t.artist}  ${t.album}`)), h("span", { class: "side" }, fmt(t.duration)))))
         : h("p", { class: "empty" }, "The queue is empty. Play an album or playlist to fill it."));
     }
+  },
+  // ---- connecting to a Plex server: sign in with Plex, or type the address and token
+  async connectView(body, s) {
+    let c = {};
+    try { c = await api("GET", "/plex/connection"); } catch { /* shown below */ }
+    const result = h("div", { class: "row", style: "margin-top:12px" });
+    const done = (conn) => {
+      toast(`Connected to ${conn.server || "Plex"}`);
+      this.stack = [{ view: "home" }];
+      this.sig = null;
+      this.render();
+    };
+    // 1. Sign in with Plex
+    const signIn = async () => {
+      // Open the window at once (a phone blocks windows opened later), then send it to plex.tv
+      const win = window.open("about:blank", "_blank");
+      let start;
+      try { start = await api("POST", "/plex/sign-in"); } catch { if (win) win.close(); return; }
+      if (win) win.location.href = start.url; else location.href = start.url;
+      result.replaceChildren(h("p", { class: "hint" }, "Approve JPlay on plex.tv in the window that opened, then come back here…"));
+      const poll = async () => {
+        if (!this.el.isConnected) return;
+        let r;
+        try { r = await api("GET", "/plex/sign-in"); } catch { result.replaceChildren(); return; }
+        if (!r.done) { setTimeout(poll, 2000); return; }
+        if (!r.servers.length) { result.replaceChildren(h("div", { class: "notice" }, "This Plex account has no servers.")); return; }
+        result.replaceChildren(h("h2", { style: "width:100%" }, "Pick your server"), ...r.servers.map((sv) =>
+          h("button", { class: "btn", onclick: async (e) => {
+            e.target.disabled = true;
+            try { done(await api("POST", "/plex/sign-in/server", { id: sv.id })); } catch { e.target.disabled = false; }
+          } }, sv.name + (sv.owned ? "" : " (shared with you)"))));
+        if (r.servers.length === 1) result.querySelector("button").click();
+      };
+      setTimeout(poll, 2000);
+    };
+    // 2. By hand
+    const url = h("input", { type: "text", inputmode: "url", autocapitalize: "off", spellcheck: "false", class: "select", placeholder: "192.168.1.10:32400", value: c.url || "", "aria-label": "Plex server address", style: "flex:1;min-width:220px" });
+    const token = h("input", { type: "password", class: "select", autocomplete: "off", "aria-label": "Plex token", style: "flex:1;min-width:220px",
+      placeholder: c.token_set ? "Saved (leave empty to keep it)" : "Plex token" });
+    const connect = async (e) => {
+      e.preventDefault();
+      const btn = e.submitter || e.target.querySelector("button");
+      btn.disabled = true;
+      try { done(await api("PUT", "/plex/connection", { url: url.value.trim(), token: token.value.trim() || null })); }
+      catch { btn.disabled = false; }
+    };
+    body.append(...kids(
+      s && !s.available && c.error ? h("div", { class: "notice warn" }, h("strong", {}, "Plex can't be reached"), c.error) : null,
+      h("h2", {}, c.connected ? `Connected to ${c.server}` : "Connect to your Plex server"),
+      h("p", { class: "hint" }, "Sign in with your Plex account and pick the server: the player gets a token of its own (you'll see it in Plex under Authorized Devices)."),
+      h("div", { class: "row" }, h("button", { class: "btn primary", onclick: signIn }, "Sign in with Plex")),
+      result,
+      h("h2", {}, "Or by hand"),
+      h("form", { class: "row", onsubmit: connect }, url, token, h("button", { class: "btn", type: "submit" }, "Connect")),
+      h("p", { class: "hint" }, "Your token: in Plex Web open any track → ⋯ → Get Info → View XML; it is the X-Plex-Token= part of the address. The player tests the connection before saving it."),
+      c.url ? h("div", { class: "row" }, h("button", { class: "btn quiet", onclick: async () => {
+        if (!confirm("Disconnect from this Plex server?")) return;
+        try { await api("PUT", "/plex/connection", { url: "" }); toast("Disconnected"); this.render(); } catch {}
+      } }, "Disconnect")) : null,
+    ));
   },
   async detail(body, v, token) {
     body.append(h("button", { class: "btn quiet back", onclick: () => this.pop() }, "Back"));

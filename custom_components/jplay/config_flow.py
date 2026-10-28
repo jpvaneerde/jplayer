@@ -14,7 +14,7 @@ except ImportError:  # older
     from homeassistant.components.zeroconf import ZeroconfServiceInfo  # type: ignore[no-redef]
 
 from .api import ApiClient, JPlayError
-from .const import CONF_KIND, DOMAIN, KIND_NOW, KIND_PLAYER, NOW_PORT, PLAYER_PORT
+from .const import CONF_KIND, DOMAIN, HUB_PORT, KIND_HUB, KIND_NOW, KIND_PLAYER, NOW_PORT, PLAYER_PORT
 
 
 class JPlayConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -27,7 +27,7 @@ class JPlayConfigFlow(ConfigFlow, domain=DOMAIN):
         return ApiClient(async_get_clientsession(self.hass), base)
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return self.async_show_menu(step_id="user", menu_options=[KIND_PLAYER, KIND_NOW])
+        return self.async_show_menu(step_id="user", menu_options=[KIND_PLAYER, KIND_NOW, KIND_HUB])
 
     # ---------------------------------------------------------------- JPlay player
     async def _player_entry(self, host: str, port: int, errors: dict[str, str]) -> ConfigFlowResult | None:
@@ -54,6 +54,8 @@ class JPlayConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_zeroconf(self, discovery_info: ZeroconfServiceInfo) -> ConfigFlowResult:
         if discovery_info.type.startswith("_jplay-display."):
             return await self._display_found(discovery_info)
+        if discovery_info.type.startswith("_jplay-hub."):
+            return await self._hub_found(discovery_info)
         host, port = str(discovery_info.ip_address), discovery_info.port or PLAYER_PORT
         pid = discovery_info.properties.get("id")
         if pid:
@@ -76,9 +78,47 @@ class JPlayConfigFlow(ConfigFlow, domain=DOMAIN):
                                            data={CONF_KIND: d.get(CONF_KIND, KIND_PLAYER), CONF_HOST: d[CONF_HOST],
                                                  CONF_PORT: d[CONF_PORT]})
         self._set_confirm_only()
-        return self.async_show_form(step_id="zeroconf_confirm" if d.get(CONF_KIND, KIND_PLAYER) == KIND_PLAYER
-                                    else "zeroconf_confirm_display",
+        kind = d.get(CONF_KIND, KIND_PLAYER)
+        return self.async_show_form(step_id={KIND_PLAYER: "zeroconf_confirm", KIND_HUB: "zeroconf_confirm_hub"}.get(
+                                        kind, "zeroconf_confirm_display"),
                                     description_placeholders={"name": d[CONF_NAME], "host": d[CONF_HOST]})
+
+    async def async_step_zeroconf_confirm_hub(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return await self.async_step_zeroconf_confirm(user_input)
+
+    async def _hub_found(self, discovery_info: ZeroconfServiceInfo) -> ConfigFlowResult:
+        host, port = str(discovery_info.ip_address), discovery_info.port or HUB_PORT
+        hid = discovery_info.properties.get("id")
+        if hid:
+            await self.async_set_unique_id(f"hub-{hid}")
+            self._abort_if_unique_id_configured(updates={CONF_HOST: host, CONF_PORT: port})
+        try:
+            info = await self._api(f"http://{host}:{port}").get("/api/info")
+        except JPlayError:
+            return self.async_abort(reason="cannot_connect")
+        await self.async_set_unique_id(f"hub-{info['id']}")
+        self._abort_if_unique_id_configured(updates={CONF_HOST: host, CONF_PORT: port})
+        self._discovered = {CONF_KIND: KIND_HUB, CONF_HOST: host, CONF_PORT: port, CONF_NAME: "JPlay hub"}
+        self.context["title_placeholders"] = {"name": "JPlay hub"}
+        return await self.async_step_zeroconf_confirm()
+
+    async def async_step_hub(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            host, port = user_input[CONF_HOST].strip(), user_input[CONF_PORT]
+            try:
+                info = await self._api(f"http://{host}:{port}").get("/api/info")
+                if info.get("kind") != "hub":
+                    raise JPlayError("not a hub")
+            except (JPlayError, AttributeError):
+                errors["base"] = "cannot_connect_hub"
+            else:
+                await self.async_set_unique_id(f"hub-{info['id']}")
+                self._abort_if_unique_id_configured(updates={CONF_HOST: host, CONF_PORT: port})
+                return self.async_create_entry(title="JPlay hub", data={CONF_KIND: KIND_HUB, CONF_HOST: host, CONF_PORT: port})
+        schema = vol.Schema({vol.Required(CONF_HOST): str, vol.Required(CONF_PORT, default=HUB_PORT): int})
+        return self.async_show_form(step_id="hub", errors=errors,
+                                    data_schema=self.add_suggested_values_to_schema(schema, user_input))
 
     async def async_step_zeroconf_confirm_display(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return await self.async_step_zeroconf_confirm(user_input)

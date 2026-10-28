@@ -7,7 +7,7 @@ from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, NOW_PORT, PLAYER_PORT, SOURCE_NAMES
+from .const import DOMAIN, HUB_PORT, NOW_PORT, PLAYER_PORT, SOURCE_NAMES
 
 
 class JPlayEntity(CoordinatorEntity):
@@ -86,6 +86,39 @@ class NowEntity(JPlayEntity):
     @property
     def dashboard(self) -> dict[str, Any]:
         return (self.coordinator.data or {}).get("dashboard") or {}
+
+
+class HubEntity(JPlayEntity):
+    """Something on the JPlay hub."""
+
+    def __init__(self, entry, key: str) -> None:
+        super().__init__(entry, key)
+        host, port = entry.data[CONF_HOST], entry.data.get(CONF_PORT, HUB_PORT)
+        info = (self.coordinator.data or {}).get("info") or {}
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.unique_id)},
+            name=entry.title,
+            manufacturer="JPlay",
+            model="JPlay hub",
+            sw_version=info.get("version"),
+            configuration_url=f"http://{host}:{port}",
+        )
+
+    @property
+    def rooms(self) -> list[dict[str, Any]]:
+        return (self.coordinator.data or {}).get("rooms") or []
+
+    def room(self, name: str) -> dict[str, Any] | None:
+        return next((r for r in self.rooms if r.get("room") == name), None)
+
+    def cover(self, url: str | None) -> str | None:
+        """A cover: one of your records goes through the hub (it holds JPlay Records' token)."""
+        if not url:
+            return None
+        if "/covers/" in url:
+            from urllib.parse import quote
+            return self.api.url(f"/api/cover?u={quote(url, safe='')}")
+        return url
 
 
 def song(title: str | None, artist: str | None) -> str | None:

@@ -98,6 +98,15 @@ class PlexPlayBody(BaseModel):
     shuffle: bool = False
 
 
+class PlexConnectionBody(BaseModel):
+    url: str = ""
+    token: str | None = None        # None: keep the saved token
+
+
+class PlexServerBody(BaseModel):
+    id: str
+
+
 class CdPlayBody(BaseModel):
     track: int = 1
 
@@ -229,7 +238,29 @@ def api_router() -> APIRouter:
         await radio.play_station(station)
         return {"ok": True}
 
-    # -- plex
+    # -- plex: the connection (address and token, or signing in with Plex)
+    @r.get("/plex/connection")
+    async def plex_connection(request: Request) -> dict[str, Any]:
+        return src(request, "plex").connection()
+
+    @r.put("/plex/connection")
+    async def plex_connect(request: Request, body: PlexConnectionBody) -> dict[str, Any]:
+        """{"url": "http://192.168.1.10:32400", "token": "..."}: test and save; {"url": ""} disconnects."""
+        return await src(request, "plex").configure(body.url, body.token)
+
+    @r.post("/plex/sign-in")
+    async def plex_sign_in(request: Request) -> dict[str, Any]:
+        """Start signing in with Plex: open the returned url and approve; then poll GET /plex/sign-in."""
+        return await src(request, "plex").sign_in_start()
+
+    @r.get("/plex/sign-in")
+    async def plex_sign_in_check(request: Request) -> dict[str, Any]:
+        return await src(request, "plex").sign_in_check()
+
+    @r.post("/plex/sign-in/server")
+    async def plex_sign_in_server(request: Request, body: PlexServerBody) -> dict[str, Any]:
+        return await src(request, "plex").sign_in_choose(body.id)
+
     @r.get("/plex/libraries")
     async def plex_libraries(request: Request) -> list[dict[str, Any]]:
         return await src(request, "plex").libraries()

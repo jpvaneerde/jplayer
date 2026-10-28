@@ -499,6 +499,9 @@ def _spin_key(r: dict) -> str | None:
     return None
 
 
+SPIN_COLUMNS = "room, kind, detail, started_at, ended_at, instance_id, artist, album, cover, record"
+
+
 def group_spins(rows: list[dict]) -> list[dict]:
     """Physical plays into spins: the same copy (or album) in the same room without a long gap."""
     spins: list[dict] = []
@@ -544,11 +547,14 @@ def now_playing() -> list[dict]:
     return out
 
 
-def stats(days: int) -> dict:
+def stats(days: int, since: int | None = None) -> dict:
+    """Totals for the last `days` days (0 = everything), or from `since` (ms; e.g. midnight for "today")."""
     t = now()
-    since = t - days * 86_400_000 if days > 0 else 0
+    if since is None:
+        since = t - days * 86_400_000 if days > 0 else 0
     count = lambda kind: db.get("SELECT COUNT(*) AS n FROM plays WHERE kind = ? AND started_at >= ?", kind, since)["n"]  # noqa: E731
-    spins = group_spins(db.all("SELECT * FROM plays WHERE kind = 'physical' AND started_at >= ?", since))
+    spins = group_spins(db.all(f"SELECT {SPIN_COLUMNS} FROM plays WHERE kind = 'physical' AND started_at >= ? "
+                               "ORDER BY started_at", since))
     by_record: dict[str, dict] = {}
     for s in spins:
         e = by_record.setdefault(s["key"], {**s["record"], "spins": 0})
@@ -664,7 +670,7 @@ def merge_duplicates(days: int = 30) -> int:
     """One play per song: merge plays of the same song within a few minutes of each other (the radio's text and
     the microphone, or two rooms). Keeps the play you corrected, else the microphone's, with the clean artist."""
     rows = db.all("SELECT * FROM plays WHERE started_at >= ? ORDER BY started_at", now() - days * 86_400_000)
-    kept: list[dict] = []
+    kept_by_title: dict[str, list[dict]] = {}
     merged = 0
 
     def rank(r):
@@ -672,6 +678,7 @@ def merge_duplicates(days: int = 30) -> int:
 
     with db.tx():
         for r in rows:
+            kept = kept_by_title.setdefault(norm(r["title"]), [])
             twin = next((k for k in kept if abs(k["started_at"] - r["started_at"]) <= 10 * 60_000 and same_song(k, r)), None)
             if not twin or (twin["confidence"] == "manual" and r["confidence"] == "manual"):
                 kept.append(r)

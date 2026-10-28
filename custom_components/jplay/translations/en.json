@@ -6,7 +6,8 @@
         "title": "Add a JPlay device",
         "menu_options": {
           "player": "JPlay player",
-          "jplayingnow": "JPlaying Now display"
+          "jplayingnow": "JPlaying Now display",
+          "hub": "JPlay hub"
         }
       },
       "player": {
@@ -33,11 +34,24 @@
       "zeroconf_confirm_display": {
         "title": "JPlaying Now display found",
         "description": "Add the JPlaying Now display **{name}** ({host})?"
+      },
+      "hub": {
+        "title": "JPlay hub",
+        "description": "The address of the Pi that is the hub (port 8090). It usually shows up by itself.",
+        "data": {
+          "host": "Host or IP address",
+          "port": "Port"
+        }
+      },
+      "zeroconf_confirm_hub": {
+        "title": "JPlay hub found",
+        "description": "Add the JPlay hub ({host})? It shows what plays in every room, today's totals and the last record put on."
       }
     },
     "error": {
       "cannot_connect": "Can't reach a JPlay player there. Check the address and that JPlay runs (port 8080).",
-      "cannot_connect_now": "Can't reach JPlaying Now there, or it is an older version without Home Assistant support (update it first)."
+      "cannot_connect_now": "Can't reach JPlaying Now there, or it is an older version without Home Assistant support (update it first).",
+      "cannot_connect_hub": "Can't reach a JPlay hub there. Check the address and that the hub runs (port 8090)."
     },
     "abort": {
       "already_configured": "This device is already added.",
