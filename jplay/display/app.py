@@ -1092,6 +1092,30 @@ async def save_settings(request: Request):
     url = "/settings" + (f"?error={quote(error)}" if error else "")
     return RedirectResponse(url=url, status_code=303)
 
+KIOSK_PROFILE = os.path.join(str(system.state_root()), "kiosk-browser")   # deploy/chromium-kiosk.sh
+
+def restart_kiosk_browser():
+    """Clear the kiosk browser's stored copies of pages and close it; the kiosk service starts it again.
+
+    The browser runs as this app's user, so no extra rights are needed. Returns what was done."""
+    cleared = 0
+    for sub in ("Cache", "Code Cache", "GPUCache", "Service Worker"):
+        path = os.path.join(KIOSK_PROFILE, "Default", sub)
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+            cleared += 1
+    res = subprocess.run(["pkill", "-u", str(os.getuid()), "-x", "chromium"], capture_output=True)
+    if res.returncode != 0:     # older Raspberry Pi OS calls it chromium-browser
+        res = subprocess.run(["pkill", "-u", str(os.getuid()), "-f", "chromium-browser"], capture_output=True)
+    return {"cleared": cleared, "restarted": res.returncode == 0}
+
+@app.post("/api/kiosk/restart")
+async def api_kiosk_restart():
+    """Settings → Restart the screen: fresh pages on the Pi's own screen (it comes back within ~10 seconds)."""
+    if not is_service_active(KIOSK_SERVICE):
+        return JSONResponse({"error": "The screen (Display locally) isn't on"}, status_code=409)
+    return await asyncio.to_thread(restart_kiosk_browser)
+
 @app.post("/system/reboot")
 async def reboot_system(request: Request):
     if not is_local_request(request):
@@ -1225,6 +1249,7 @@ async def get_dashboard():
         "lyrics": lyrics_track(cfg, player_cards.get(p["id"]) if p else None, time.time()),
         "update_available": update_available[0],
         "hub": hub_link(cfg),
+        "version": app_version(),          # the page reloads itself when this changes (after an update)
     }
 
 def hub_link(cfg):

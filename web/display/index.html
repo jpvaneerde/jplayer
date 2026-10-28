@@ -363,9 +363,15 @@
         let lastHtml = null, data = null, clock = { pos: 0, dur: 0, at: 0, running: false };
         const panel = document.getElementById('panel');
 
+        let pageVersion = null;
         async function update() {
             try {
                 data = await (await fetch('/api/dashboard')).json();
+                // After an update the page reloads itself (the Pi's own screen never would)
+                if (data.version) {
+                    if (pageVersion && data.version !== pageVersion) { location.reload(); return; }
+                    pageVersion = data.version;
+                }
                 document.body.className = THEMES.includes(data.config.theme) ? data.config.theme : 'dark';
                 const p = data.player;
                 // Playing, or paused for a moment: the player. Stopped, idle, or paused for a while: the listener.

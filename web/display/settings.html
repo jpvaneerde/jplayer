@@ -231,6 +231,16 @@
         <button type="submit" class="btn">Save & Apply Settings</button>
     </form>
 
+    {% if system.kiosk_active %}
+    <div class="card" style="margin-top: 30px;">
+        <h3 style="margin-top:0;">The Pi's screen</h3>
+        <p style="font-size: 0.85rem; color: #9ca3af;">Shows something old or odd? This clears the screen's stored copies of the
+            pages and starts it again; it is back within about ten seconds. Settings and history stay as they are.</p>
+        <button type="button" class="btn" id="kiosk-restart">Restart the screen</button>
+        <span id="kiosk-restart-msg" style="font-size: 0.85rem; color: #9ca3af; margin-left: 10px;"></span>
+    </div>
+    {% endif %}
+
     {% if is_local %}
     <div class="card" style="margin-top: 30px; border: 1px solid #dc2626;">
         <h3 style="color: #ef4444; margin-top:0;">Power Controls</h3>
@@ -329,6 +339,18 @@
             `;
             document.getElementById('player-list').appendChild(div);
         }
+
+        document.getElementById('kiosk-restart')?.addEventListener('click', async (e) => {
+            const msg = document.getElementById('kiosk-restart-msg');
+            e.target.disabled = true;
+            msg.textContent = 'Restarting…';
+            try {
+                const r = await fetch('/api/kiosk/restart', { method: 'POST' });
+                const d = await r.json();
+                msg.textContent = r.ok ? 'The screen restarts now.' : (d.error || 'That didn\'t work');
+            } catch (err) { msg.textContent = 'The screen restarts now.'; }   // on the Pi's own screen this page goes too
+            setTimeout(() => { e.target.disabled = false; }, 15000);
+        });
 
         async function systemAction(action) {
             if (!confirm(`Are you sure you want to ${action} the Raspberry Pi?`)) return;
