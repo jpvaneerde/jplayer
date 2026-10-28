@@ -84,9 +84,9 @@ async def test_browse(plex):
     source, _ = plex
     assert (await source.libraries()) == [{"key": "1", "title": "Music"}]
     page = await source.browse_section("1", "album", 0, 2, "title")
-    assert page["total"] == 4 and [i["title"] for i in page["items"]] == ["Kind of Blue", "Pastel Blues"]
+    assert page["total"] == 5 and [i["title"] for i in page["items"]] == ["Kind of Blue", "Pastel Blues"]
     kids = await source.children("100")
-    assert [a["title"] for a in kids["items"]] == ["Kind of Blue", "Sketches of Spain"]
+    assert [a["title"] for a in kids["items"]] == ["Kind of Blue", "Sketches of Spain", "Walkin' EP"]
     found = await source.search("blue")
     assert {a["title"] for a in found["album"]} == {"Kind of Blue", "Pastel Blues"}
     assert "token" not in kids["items"][0]["thumb"]  # the token never reaches the browser

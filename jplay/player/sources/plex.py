@@ -60,6 +60,36 @@ def _item(obj: Any) -> dict[str, Any]:
     return out
 
 
+def _artist_albums(srv: Any, artist: Any) -> list[Any]:
+    """All of an artist's releases. The artist's own list (/children) can leave out singles and EPs (Plex files
+    them under "Singles & EPs"), so the library is also asked for every album by the artist, and albums that only
+    have tracks by the artist (on someone else's record) come last."""
+    rid = artist.ratingKey
+    seen: dict[str, Any] = {}
+
+    def add(items):
+        for a in items:
+            if getattr(a, "type", "") == "album" and str(a.ratingKey) not in seen:
+                seen[str(a.ratingKey)] = a
+
+    for path in (f"/library/metadata/{rid}/children",
+                 f"/library/sections/{artist.librarySectionID}/all?type=9&artist.id={rid}"):
+        try:
+            add(srv.fetchItems(path))
+        except Exception as e:                   # one way failing mustn't hide what the other finds
+            log.debug("Plex %s: %s", path, e)
+    if not seen:
+        try:
+            keys = {str(t.parentRatingKey) for t in srv.fetchItems(f"/library/metadata/{rid}/allLeaves")
+                    if getattr(t, "parentRatingKey", None)}
+            for k in sorted(keys):
+                add(srv.fetchItems(f"/library/metadata/{k}"))
+        except Exception as e:
+            log.debug("Plex tracks of %s: %s", rid, e)
+    first = list(seen.values())
+    return sorted(first, key=lambda a: (a.year or 9999, (a.title or "").lower()))
+
+
 class PlexSource(EngineSource):
     id = "plex"
     name = "Plex"
@@ -327,7 +357,7 @@ class PlexSource(EngineSource):
             obj = srv.fetchItem(int(key))
             kind = obj.type
             if kind == "artist":
-                kids = srv.fetchItems(f"/library/metadata/{obj.ratingKey}/children")
+                kids = _artist_albums(srv, obj)
             elif kind == "album":
                 kids = obj.tracks()
             elif kind == "playlist":

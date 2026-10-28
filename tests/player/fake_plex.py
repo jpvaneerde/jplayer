@@ -22,12 +22,15 @@ ARTISTS = {
 ALBUMS = {
     101: {"artist": 100, "title": "Kind of Blue", "year": 1959, "added": 1700000300},
     102: {"artist": 100, "title": "Sketches of Spain", "year": 1960, "added": 1700000200},
+    # Real Plex leaves singles and EPs out of the artist's /children list (they're under "Singles & EPs")
+    103: {"artist": 100, "title": "Walkin' EP", "year": 1961, "added": 1700000050, "ep": True},
     201: {"artist": 200, "title": "Waltz for Debby", "year": 1962, "added": 1700000100},
     301: {"artist": 300, "title": "Pastel Blues", "year": 1965, "added": 1700000400},
 }
 TRACK_NAMES = {
     101: ["So What", "Freddie Freeloader", "Blue in Green"],
     102: ["Concierto de Aranjuez", "Will o' the Wisp"],
+    103: ["Walkin'"],
     201: ["My Foolish Heart", "Waltz for Debby", "Detour Ahead"],
     301: ["Be My Husband", "Nobody Knows You When You're Down and Out", "Sinnerman"],
 }
@@ -129,6 +132,8 @@ def create_app(audio_dir: Path) -> FastAPI:
                 ids = sorted(ALBUMS, key=lambda i: -ALBUMS[i]["added"])
             else:
                 ids = sorted(ALBUMS, key=lambda i: ALBUMS[i]["title"])
+            if req.query_params.get("artist.id"):
+                ids = [i for i in ids if ALBUMS[i]["artist"] == int(req.query_params["artist.id"])]
             return page(req, [album_xml(i) for i in ids])
         return container([])
 
@@ -147,7 +152,7 @@ def create_app(audio_dir: Path) -> FastAPI:
     @app.get("/library/metadata/{rid}/children")
     async def children(rid: int):
         if rid in ARTISTS:
-            return container([album_xml(b) for b, a in ALBUMS.items() if a["artist"] == rid])
+            return container([album_xml(b) for b, a in ALBUMS.items() if a["artist"] == rid and not a.get("ep")])
         if rid in ALBUMS:
             return container([track_xml(t) for t, x in TRACKS.items() if x["album"] == rid])
         return Response(status_code=404)
