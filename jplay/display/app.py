@@ -45,7 +45,7 @@ try:
     from shazamio import Shazam
     from . import history, lyrics, players, report, touchwake
     from .. import __version__
-    from ..common import hub as hubs, system
+    from ..common import hub as hubs, no_stale_pages, system
     from ..common.announce import DISPLAY_TYPE, Announcer
     from ..common.updates import UpdateError
 except Exception:
@@ -91,6 +91,7 @@ async def lifespan(app: FastAPI):
     await announcer.shutdown()
 
 app = FastAPI(lifespan=lifespan)
+no_stale_pages(app)
 
 PORT = 5000
 ANNOUNCE = True                   # tests switch the network announcement off

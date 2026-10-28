@@ -26,7 +26,7 @@ from .core.manager import SourceManager
 from .core.mpv import MpvEngine
 from .core.output import Output
 from .core.store import StateStore
-from ..common import system
+from ..common import no_stale_pages, system
 from ..common.updates import UpdateError
 from .core.volume import Volume
 from .sources.base import SourceError
@@ -510,6 +510,7 @@ def create_app(config: Config) -> FastAPI:
     async def source_error(_: Request, exc: SourceError) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=exc.status)
 
+    no_stale_pages(app)
     app.include_router(api_router())
     app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
     return app

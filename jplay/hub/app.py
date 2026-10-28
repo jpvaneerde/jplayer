@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .. import __version__
-from ..common import system
+from ..common import no_stale_pages, system
 from ..common.announce import HUB_TYPE, Announcer
 from ..common.updates import UpdateError
 from . import db, importer, lyrics, records, records_sync, spins
@@ -157,6 +157,7 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
     app = FastAPI(title="JPlay hub", version=__version__, lifespan=lifespan, docs_url="/api/docs",
                   openapi_url="/api/openapi.json", redoc_url=None)
     app.state.updates = system.updates()
+    no_stale_pages(app)
 
     def app_version() -> str:
         v = app.state.updates.version()["version"]
