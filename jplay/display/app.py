@@ -80,7 +80,10 @@ async def lifespan(app: FastAPI):
     cfg = load_config()
     save_config(cfg)                                # keeps the unit id made just now, and settings moved over
     set_screen_rotation(cfg.get("screen_rotation", "normal"))
-    set_touch_rotation(cfg.get("screen_rotation", "normal"))   # before the kiosk starts (it waits for this app)
+    # Before the kiosk starts at boot (it waits for this app); after an update the kiosk is already running and
+    # must start again for the touch screen to take a changed turn
+    if set_touch_rotation(cfg.get("screen_rotation", "normal")) and is_service_active(KIOSK_SERVICE):
+        restart_kiosk_browser(False)
     announcer = Announcer(display_name(cfg), PORT, {"id": cfg["unit_id"], "version": app_version(),
                                                     "room": cfg.get("room", ""), "path": "/api"}, DISPLAY_TYPE)
     if ANNOUNCE:
