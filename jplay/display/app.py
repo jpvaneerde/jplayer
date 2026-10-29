@@ -42,8 +42,8 @@ try:
     from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
     from fastapi.staticfiles import StaticFiles
     from fastapi.templating import Jinja2Templates
-    from shazamio import Shazam
-    from . import history, lyrics, players, report, touchwake
+    from shazamio import Shazam  # noqa: F401  (fails here, with the message below, when it is missing)
+    from . import history, lyrics, players, recognizer, report, touchwake
     from .. import __version__
     from ..common import hub as hubs, no_stale_pages, system
     from ..common.announce import DISPLAY_TYPE, Announcer
@@ -116,7 +116,7 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 templates = Jinja2Templates(directory=STATIC_DIR)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-shazam = Shazam()
+shazam = recognizer.Recognizer()     # every Shazam question goes through here (rate and back-off)
 
 DEFAULT_CONFIG = {
     "theme": "dark",
@@ -583,8 +583,10 @@ async def background_radio_listener():
             if not cfg.get("radio_listen", True) or not shutil.which("ffmpeg"):
                 continue
             now = time.time()
+            own = own_player_ids(cfg)
             for pid, card in list(player_cards.items()):
-                url = players.needs_listening(card, player_status.get(pid))
+                # Only this display's own player: every display listening to every radio asked Shazam too often
+                url = players.needs_listening(card, player_status.get(pid)) if pid in own else ""
                 if not url:
                     if card.get("source") != "radio":
                         radio.forget(pid)
@@ -598,7 +600,7 @@ async def background_radio_listener():
                 try:
                     rec_start = time.time()
                     audio = await loop.run_in_executor(None, players.record_stream, url)
-                    song = parse_shazam(await shazam.recognize(audio))
+                    song = parse_shazam(await shazam.recognize(audio, "radio"))
                 except Exception as e:
                     radio.missed(pid, time.time(), f"listening failed: {type(e).__name__}: {e}")
                     continue
@@ -650,6 +652,7 @@ def shazam_offset(out):
 
 MIN_PLAY_SECONDS = 20          # a song must be heard this long before it enters history
 MIC_SOURCE_NAME = "Ambient Listener"
+MIC_MIN_LEVEL_DB = -60     # quieter than this (dBFS) is silence: not sent to Shazam
 pending_play = {"key": None, "first": None, "last": None, "logged": False, "heard": None, "spin_id": None}
 
 def _finish_pending():
@@ -681,7 +684,12 @@ async def background_mic_listener():
                 rec_start = time.time()
                 audio_bytes = await loop.run_in_executor(None, record_audio, duration)
 
-                out = await shazam.recognize(audio_bytes)
+                # Only ask Shazam when the microphone hears something: silence is most of the day
+                quiet_db = float(cfg.get("mic_min_level_db", MIC_MIN_LEVEL_DB))
+                if LAST_LEVEL_DB is not None and LAST_LEVEL_DB < quiet_db:
+                    out = {}
+                else:
+                    out = await shazam.recognize(audio_bytes, "mic")
                 track = out.get('track', {})
 
                 if track:
@@ -1255,6 +1263,12 @@ async def api_info():
     return {"id": cfg["unit_id"], "name": display_name(cfg), "room": cfg.get("room", ""), "kind": "display",
             "version": app_version()}
 
+@app.get("/api/recognizer")
+async def get_recognizer():
+    """How the questions to Shazam go: asked, found, refused, and the wait after a refusal."""
+    return {**shazam.view(), "mic_level_db": LAST_LEVEL_DB,
+            "mic_min_level_db": float(load_config().get("mic_min_level_db", MIC_MIN_LEVEL_DB))}
+
 @app.get("/api/screen-status")
 async def api_screen_status():
     """What the screen manager currently sees (for troubleshooting)."""
@@ -1264,6 +1278,17 @@ async def api_screen_status():
 async def api_players_status():
     """Raw player status and the radio listener's last result per player (for troubleshooting)."""
     return {"players": player_status, "radio_listener": radio.status, "ffmpeg": bool(shutil.which("ffmpeg"))}
+
+def own_player_ids(cfg):
+    """The players this display names radio songs for: the one it shows and its room's player."""
+    ids = set()
+    shown = view_player(cfg)
+    if shown:
+        ids.add(shown["id"])
+    room = str(cfg.get("room_player") or "").strip()
+    if room:
+        ids |= {pid for pid, c in player_cards.items() if c.get("host") == room}
+    return ids
 
 def view_player(cfg):
     """The player this display shows: the chosen one, else the first enabled one."""

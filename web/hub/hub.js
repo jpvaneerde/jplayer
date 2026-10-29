@@ -56,7 +56,7 @@ function ago(ms) {
 function header(page) {
   const links = [['/', 'Home'], ['/spins', 'Spins'], ['/lyrics', 'Lyrics'], ['/settings', 'Settings']];
   document.body.insertAdjacentHTML('afterbegin', `<header><a href="#" class="back" id="back-display" hidden>‹ Display</a>
-    <div class="brand"><img src="/static/icon.svg" alt=""><span>JPlay hub</span></div>
+    <div class="brand"><img src="/static/icon.svg" alt=""><span>JPlayer</span></div>
     <nav>${links.map(([h, t]) => `<a href="${h}" class="${h === page ? 'on' : ''}">${t}</a>`).join('')}</nav>
     <button class="theme-btn" id="theme-btn" aria-label="Theme"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18zm0 2v14a7 7 0 0 0 0-14z" fill-rule="evenodd"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/></svg></button></header>`);
   const themeBtn = $('theme-btn');

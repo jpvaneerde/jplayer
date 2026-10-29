@@ -1,6 +1,6 @@
 {
-  "name": "JPlay",
-  "short_name": "JPlay",
+  "name": "JPlayer",
+  "short_name": "JPlayer",
   "description": "Every room's music: the players, the displays, Spins and lyrics",
   "id": "/",
   "start_url": "/",
