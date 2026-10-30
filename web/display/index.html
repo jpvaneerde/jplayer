@@ -23,15 +23,15 @@
         body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; margin: 0;
                overflow: hidden; transition: background 0.3s; -webkit-font-smoothing: antialiased; }
 
-        /* Stretches to the display, capped at 800x480 (480x800 in portrait) */
+        /* Fills the whole screen at any size (800x480, 1024x600, 1280x800, ...): everything grows with the
+           screen's shorter side, so a bigger screen shows the same layout, larger */
         #app {
-            --pad: clamp(8px, 2.4vmin, 16px);
-            width: min(100vw, 800px); height: min(100vh, 480px); height: min(100dvh, 480px);
-            margin: 0 auto; padding: var(--pad); box-sizing: border-box;
+            --pad: clamp(8px, 2.4vmin, 28px);
+            width: 100vw; height: 100vh; height: 100dvh;
+            margin: 0; padding: var(--pad); box-sizing: border-box;
             display: flex; flex-direction: column; gap: var(--pad);
-            font-size: clamp(12px, 3vmin, 18px); position: relative;
+            font-size: clamp(12px, 3vmin, 36px); position: relative;
         }
-        @media (orientation: portrait) { #app { width: min(100vw, 480px); height: min(100vh, 800px); height: min(100dvh, 800px); } }
 
         header { display: flex; align-items: center; gap: 0.5em; flex: none; position: relative; z-index: 3; }
         .logo { color: inherit; display: block; margin-right: auto; }
