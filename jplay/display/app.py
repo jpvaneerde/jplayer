@@ -43,7 +43,7 @@ try:
     from fastapi.staticfiles import StaticFiles
     from fastapi.templating import Jinja2Templates
     from shazamio import Shazam  # noqa: F401  (fails here, with the message below, when it is missing)
-    from . import history, lyrics, players, recognizer, report, touchwake
+    from . import audd, history, lyrics, players, recognizer, report, touchwake
     from .. import __version__
     from ..common import hub as hubs, no_stale_pages, system
     from ..common.announce import DISPLAY_TYPE, Announcer
@@ -653,6 +653,37 @@ def shazam_offset(out):
 MIN_PLAY_SECONDS = 20          # a song must be heard this long before it enters history
 MIC_SOURCE_NAME = "Ambient Listener"
 MIC_MIN_LEVEL_DB = -60     # quieter than this (dBFS) is silence: not sent to Shazam
+MIC_ASK_AGAIN = 30         # seconds between questions while music plays that wasn't recognised
+mic_next_ask = [0.0]       # don't ask before this (the song recognised last should still be playing)
+audd_client = audd.AudD()  # the optional backup while Shazam refuses (a token in Settings)
+
+def audd_backup(cfg):
+    """The backup for the microphone while Shazam refuses, when there is an AudD token."""
+    token = str(cfg.get("audd_token") or "").strip()
+    if not token:
+        return None
+    return lambda audio: audd_client.recognize(audio, token)
+
+async def _log_if_due(cfg):
+    """History and the hub get a song once it has been heard for MIN_PLAY_SECONDS."""
+    s = latest_ambient_state
+    if pending_play["logged"] or not pending_play["first"] or not s.get("identified"):
+        return
+    if time.time() - pending_play["first"] < MIN_PLAY_SECONDS:
+        return
+    pending_play["logged"] = True
+    shazam_key, isrc = pending_play.get("ids") or ("", "")
+    if report.enabled(cfg):
+        pending_play["spin_id"] = report.queue("mic", pending_play["first"], {
+            "title": s["title"], "artist": s["artist"], "album": s["album"],
+            "genre": s["genre"], "year": s["year"],
+            "cover": s["coverart"] if str(s["coverart"]).startswith("http") else "",
+            "shazam_key": shazam_key, "isrc": isrc, "level_db": LAST_LEVEL_DB,
+        })
+    first = pending_play["first"]
+    await asyncio.to_thread(
+        history.log_play, s["name"], s["title"], s["artist"], s["album"], s["genre"], s["year"], s["coverart"],
+        played_at=datetime.fromtimestamp(first))
 pending_play = {"key": None, "first": None, "last": None, "logged": False, "heard": None, "spin_id": None}
 
 def _finish_pending():
@@ -684,12 +715,21 @@ async def background_mic_listener():
                 rec_start = time.time()
                 audio_bytes = await loop.run_in_executor(None, record_audio, duration)
 
-                # Only ask Shazam when the microphone hears something: silence is most of the day
+                # Only ask when the microphone hears something (silence is most of the day), and once per song:
+                # after a match, not again until the song should have ended; after no match, every 30 s.
                 quiet_db = float(cfg.get("mic_min_level_db", MIC_MIN_LEVEL_DB))
+                now = time.time()
                 if LAST_LEVEL_DB is not None and LAST_LEVEL_DB < quiet_db:
                     out = {}
+                    mic_next_ask[0] = 0.0                     # music after a silence (a new side): ask at once
+                elif now < mic_next_ask[0]:
+                    if latest_ambient_state.get("identified"):   # still playing: the same song is still heard
+                        pending_play["heard"] = pending_play["last"] = now
+                        await _log_if_due(cfg)
+                    continue
                 else:
-                    out = await shazam.recognize(audio_bytes, "mic")
+                    out = await shazam.recognize(audio_bytes, "mic", audd_backup(cfg))
+                    mic_next_ask[0] = time.time() + MIC_ASK_AGAIN
                 track = out.get('track', {})
 
                 if track:
@@ -733,23 +773,11 @@ async def background_mic_listener():
                         pending_play.update(key=key, first=now - duration, last=now, logged=False)
                     else:
                         pending_play["last"] = now
-                    if not pending_play["logged"] and now - pending_play["first"] >= MIN_PLAY_SECONDS:
-                        pending_play["logged"] = True
-                        if report.enabled(cfg):
-                            pending_play["spin_id"] = report.queue("mic", pending_play["first"], {
-                                "title": s["title"], "artist": s["artist"], "album": s["album"],
-                                "genre": s["genre"], "year": s["year"],
-                                "cover": s["coverart"] if str(s["coverart"]).startswith("http") else "",
-                                "shazam_key": track.get("key", ""), "isrc": track.get("isrc", ""),
-                                "level_db": LAST_LEVEL_DB,
-                            })
-                        await loop.run_in_executor(
-                            None, lambda: history.log_play(
-                                s["name"], s["title"], s["artist"], s["album"], s["genre"],
-                                s["year"], s["coverart"],
-                                played_at=datetime.fromtimestamp(pending_play["first"]),
-                            )
-                        )
+                    pending_play["ids"] = (track.get("key", ""), track.get("isrc", ""))
+                    # Not asked again until this song should have ended (or a silence: the needle lifted)
+                    left = (s["duration"] or 0) - ((s["offset"] or 0) + (now - rec_start))
+                    mic_next_ask[0] = now + (min(600, max(MIC_ASK_AGAIN, left + 5)) if s["duration"] else 60)
+                    await _log_if_due(cfg)
                 else:
                     now = time.time()
                     # Forget the history candidate if the song has been gone for a while
@@ -1036,6 +1064,7 @@ async def settings_page(request: Request):
         name="settings.html",
         context={
             "config": cfg, "system": system_status, "is_local": is_local_request(request),
+            "audd_daily_max": audd.DAILY_MAX,
             "mics": await asyncio.to_thread(list_input_devices), "mic_selected": mic_selected,
             "mic_note": mic_note, "mic_default": MIC_DEFAULT,
             "report": report.status, "report_seen": {
@@ -1057,6 +1086,14 @@ async def save_settings(request: Request):
     cfg["theme"] = form.get("theme", "dark")
     cfg["screen_rotation"] = form.get("screen_rotation", "normal")
     cfg["mic_enabled"] = form.get("mic_enabled") == "on"
+    try:
+        cfg["mic_min_level_db"] = max(-90.0, min(-10.0, float(form.get("mic_min_level_db"))))
+    except (TypeError, ValueError):
+        pass
+    if form.get("audd_remove") == "on":
+        cfg["audd_token"] = ""
+    elif str(form.get("audd_token") or "").strip():
+        cfg["audd_token"] = str(form.get("audd_token")).strip()
     cfg["mic_interval_seconds"] = to_int(
         form.get("mic_interval_seconds"), 8, minimum=3, maximum=60
     )
@@ -1266,7 +1303,9 @@ async def api_info():
 @app.get("/api/recognizer")
 async def get_recognizer():
     """How the questions to Shazam go: asked, found, refused, and the wait after a refusal."""
-    return {**shazam.view(), "mic_level_db": LAST_LEVEL_DB,
+    return {**shazam.view(), "backup": {"name": "AudD", "on": bool(str(load_config().get("audd_token") or "").strip()),
+                                        **audd_client.view()},
+            "mic_level_db": LAST_LEVEL_DB,
             "mic_min_level_db": float(load_config().get("mic_min_level_db", MIC_MIN_LEVEL_DB))}
 
 @app.get("/api/screen-status")
@@ -1301,7 +1340,7 @@ async def get_dashboard():
     # Served from the background poller's cache, so the page never waits on a player
     p = view_player(cfg)
     return {
-        "config": cfg,
+        "config": {k: v for k, v in cfg.items() if k != "audd_token"},     # the key stays on the Pi
         "player": player_cards.get(p["id"]) if p else None,
         "players": [{"id": x["id"], "name": x["name"]} for x in cfg.get("players", []) if x.get("enabled", True)],
         "view": p["id"] if p else "",

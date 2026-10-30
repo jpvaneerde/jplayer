@@ -104,3 +104,16 @@ def test_touch_turns_with_the_screen(client, monkeypatch):
     # Saving again with the same rotation leaves the kiosk alone
     client.post("/settings/save", data={"screen_rotation": "inverted", "local_kiosk": "on"}, follow_redirects=False)
     assert restarted == [False]
+
+
+def test_audd_key_is_saved_but_never_shown(client):
+    client.post("/settings/save", data={"audd_token": "secret-key", "mic_min_level_db": "-50"}, follow_redirects=False)
+    cfg = display.load_config()
+    assert cfg["audd_token"] == "secret-key" and cfg["mic_min_level_db"] == -50.0
+    assert "secret-key" not in client.get("/settings").text and "Saved (leave empty to keep)" in client.get("/settings").text
+    assert "audd_token" not in client.get("/api/dashboard").json()["config"]
+    assert client.get("/api/recognizer").json()["backup"]["on"] is True
+    client.post("/settings/save", data={"audd_token": ""}, follow_redirects=False)       # empty keeps it
+    assert display.load_config()["audd_token"] == "secret-key"
+    client.post("/settings/save", data={"audd_remove": "on"}, follow_redirects=False)
+    assert display.load_config()["audd_token"] == ""

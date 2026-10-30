@@ -156,6 +156,21 @@
             </p>
             <label>Microphone Sampling Duration (seconds)</label>
             <input type="number" name="mic_interval_seconds" value="{{ config.mic_interval_seconds }}">
+            <label>Silence below (dB)</label>
+            <input type="number" name="mic_min_level_db" step="1" min="-90" max="-10" value="{{ config.mic_min_level_db if config.mic_min_level_db is defined else -60 }}">
+            <p style="font-size: 0.8rem; color: #9ca3af; margin: 6px 0 0;">
+                Quieter than this is silence and isn't sent to Shazam. Pick a value between the level of the quiet
+                room and of music playing (both shown at <a href="/api/recognizer" style="color: inherit;">/api/recognizer</a>, "mic_level_db").
+            </p>
+            <label>AudD key (optional backup while Shazam refuses)</label>
+            <input type="password" name="audd_token" autocomplete="off" value="" placeholder="{% if config.audd_token %}Saved (leave empty to keep){% else %}From dashboard.audd.io{% endif %}">
+            {% if config.audd_token %}
+            <label class="checkbox-label"><input type="checkbox" name="audd_remove"> Remove the AudD key</label>
+            {% endif %}
+            <p style="font-size: 0.8rem; color: #9ca3af; margin: 6px 0 0;">
+                When Shazam limits this display, songs are asked from <a href="https://audd.io" style="color: inherit;">AudD</a>
+                instead: once per song, at most {{ audd_daily_max }} a day. AudD is paid per request (300 free to try).
+            </p>
         </div>
 
         <div class="card">
