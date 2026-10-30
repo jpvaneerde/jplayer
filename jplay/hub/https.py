@@ -166,6 +166,8 @@ def nginx_conf(s: dict, devs: list[dict], cert_dir: Path, hub_port: int = device
     ssl_certificate_key {cert_dir}/live/{name}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;"""  # noqa: E731
     out = [f"""# Written by the JPlay hub (jplay/hub/https.py): don't edit, it is written again.
+# Room for long device names (lounge-display.home.jplay.cloud and longer; nginx's default only fits short ones)
+server_names_hash_bucket_size 128;
 map $http_upgrade $jplay_connection {{ default upgrade; '' close; }}
 
 server {{

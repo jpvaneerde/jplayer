@@ -39,6 +39,7 @@ def test_nginx_settings(client, tmp_path):
     assert "server_name home.jplay.cloud *.home.jplay.cloud;" in conf and "return 301 https://$host" in conf
     assert "server_name lounge-display.home.jplay.cloud;" in conf and "proxy_pass http://192.168.1.40:5000;" in conf
     assert "proxy_pass http://127.0.0.1:8090;" in conf and "[::]" not in conf
+    assert "server_names_hash_bucket_size 128;" in conf          # long names (a display's default name)
     assert conf.count("live/devices/fullchain.pem") == 4 and conf.count("live/home/fullchain.pem") == 1
     assert "listen [::]:443 ssl;" in https.nginx_conf(s, devices.devices(), tmp_path, ipv6=True)
 
