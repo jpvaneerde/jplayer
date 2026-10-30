@@ -166,3 +166,19 @@ def test_the_players_song_keeps_its_cover_and_rooms_ignore_capitals(hub):
     assert [r["name"] for r in spins.rooms()] == ["Study"]
     p = next(p for p in spins.list_plays()["plays"] if p["title"] == "Rotten Apple")
     assert p["cover"] == "http://p:8080/art.jpg"
+
+
+def test_a_records_cover_comes_with_the_songs_own_cover():
+    """When the record's cover (from JPlay Records) can't be fetched, the page shows the song's own one."""
+    from jplay.hub import spins as sp
+    row = {"id": 1, "room": "Lounge", "kind": "physical", "detail": "vinyl", "station": None, "started_at": 1,
+           "ended_at": 2, "title": "Tongue", "artist": "Fontaines D.C.", "album": "Dopamine Chamber",
+           "cover": "https://is1.mzstatic.com/x.jpg", "instance_id": "i1",
+           "record": json.dumps({"artist": "Fontaines D.C.", "title": "Dopamine Chamber", "year": 2026,
+                                 "cover": "https://records/covers/r1.jpg"}),
+           "confidence": "mic", "heard_by": "[]", "note": None, "alternatives": "[]"}
+    v = sp.view([row])[0]
+    assert v["cover"] == "https://records/covers/r1.jpg" and v["cover_alt"] == "https://is1.mzstatic.com/x.jpg"
+    assert sp.view([{**row, "record": None}])[0]["cover_alt"] is None
+    spin = sp.group_spins([row])[0]
+    assert spin["record"]["cover"] == "https://records/covers/r1.jpg" and spin["cover_alt"] == "https://is1.mzstatic.com/x.jpg"

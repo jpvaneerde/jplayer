@@ -465,6 +465,8 @@ def view(rows: list[dict]) -> list[dict]:
             "id": r["id"], "room": r["room"], "kind": r["kind"], "detail": r["detail"], "station": r["station"],
             "started_at": r["started_at"], "ended_at": r["ended_at"], "title": r["title"], "artist": r["artist"],
             "album": r["album"], "cover": (record or {}).get("cover") or r["cover"],
+            # The song's own cover (from the microphone or player), for when the record's cover can't be fetched
+            "cover_alt": r["cover"] if (record or {}).get("cover") and r["cover"] != record.get("cover") else None,
             "instance_id": r["instance_id"] if record else None,
             "record": {"id": r["instance_id"], **record} if record else None,
             "confidence": r["confidence"], "heard_by": json.loads(r["heard_by"]), "note": r["note"],
@@ -515,10 +517,11 @@ def group_spins(rows: list[dict]) -> list[dict]:
         if s and r["started_at"] - s["ended_at"] < SPIN_GAP_MS:
             s["ended_at"] = max(s["ended_at"], end)
             s["tracks"] += 1
+            s["cover_alt"] = s["cover_alt"] or r["cover"]
         else:
             record = json.loads(r["record"]) if r.get("record") else None
             s = {"key": k, "instance_id": r["instance_id"], "room": r["room"], "medium": r["detail"],
-                 "started_at": r["started_at"], "ended_at": end, "tracks": 1,
+                 "started_at": r["started_at"], "ended_at": end, "tracks": 1, "cover_alt": r["cover"],
                  "record": {"id": r["instance_id"], **record} if record else
                  {"id": None, "artist": r["artist"], "title": r["album"], "year": None, "cover": r["cover"]}}
             spins.append(s)

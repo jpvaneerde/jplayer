@@ -60,7 +60,7 @@ function badge(p) {
 function playLine(p, withMenu = true) {
   const rec = p.record ? `<div class="note">${esc(p.record.artist)} – ${esc(p.record.title)}${p.record.year ? ' (' + p.record.year + ')' : ''}</div>` : '';
   const note = !p.record && p.note ? `<div class="note">${esc(p.note)}</div>` : '';
-  return `<img class="cover" loading="lazy" src="${esc(coverUrl(p.cover))}" alt="" onerror="this.onerror=null; this.src='/static/icon.svg'">
+  return `${coverImg(p.cover, p.cover_alt, 'class="cover"')}
     <div class="grow"><div class="title ellipsis">${esc(p.title)}</div>
       <div class="ellipsis">${esc(p.artist)}${p.album ? ' <span class="muted">· ' + esc(p.album) + '</span>' : ''}</div>
       <div class="row small" style="gap: 6px; margin-top: 2px;">${badge(p)}<span class="muted">${esc(p.room)}</span></div>${rec}${note}</div>
@@ -88,7 +88,7 @@ async function loadNow() {
 async function loadSpins() {
   const { spins } = await api('/api/spins?limit=24');
   $('spins').innerHTML = spins.length ? spins.map((s) => `<div class="spin" title="${esc(s.record.artist)} – ${esc(s.record.title)}">
-      <img loading="lazy" src="${esc(coverUrl(s.record.cover))}" alt="" onerror="this.onerror=null; this.src='/static/icon.svg'">
+      ${coverImg(s.record.cover, s.cover_alt)}
       <div class="small title ellipsis" style="margin-top: 4px;">${esc(s.record.title || s.record.artist)}</div>
       <div class="small muted ellipsis">${esc(s.record.artist)}</div>
       <div class="small muted">${dayLabel(s.started_at)} · ${s.tracks} track${s.tracks === 1 ? '' : 's'}</div></div>`).join('')

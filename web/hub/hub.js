@@ -37,6 +37,18 @@ function coverUrl(u) {
   return /\/covers\//.test(u) ? `/api/cover?u=${encodeURIComponent(u)}` : u;
 }
 
+// A cover that can't be shown: try the second one (data-alt: the song's own cover), then the plain icon
+function coverFailed(img) {
+  const alt = img.dataset.alt;
+  if (alt) { delete img.dataset.alt; img.src = coverUrl(alt); return; }
+  img.onerror = null;
+  img.src = '/static/icon.svg';
+}
+function coverImg(main, alt, attrs = '') {
+  const a = alt && alt !== main ? ` data-alt="${esc(alt)}"` : '';
+  return `<img ${attrs} loading="lazy" src="${esc(coverUrl(main || alt))}"${main ? a : ''} alt="" onerror="coverFailed(this)">`;
+}
+
 const time = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 function dayLabel(ms) {
   const d = new Date(ms), today = new Date();
