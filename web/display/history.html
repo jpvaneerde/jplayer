@@ -110,6 +110,7 @@
         }
         function safeUrl(url) {
             const u = String(url ?? '');
+            if (location.protocol === 'https:' && /^http:\/\//i.test(u)) return esc('/api/img?u=' + encodeURIComponent(u));
             return (u.startsWith('/') && !u.startsWith('//')) || /^https?:\/\//i.test(u) ? esc(u) : '/static/default_cover.png';
         }
         function filterQuery() {

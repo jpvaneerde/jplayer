@@ -74,7 +74,7 @@ function playerCard(p, disp) {
   const by = s.source ? [s.artist, s.source === 'radio' && s.station && s.station !== s.title ? s.station : s.album].filter(Boolean).join(' · ') : 'Nothing playing';
   return `<div class="card player ${on ? '' : 'offline'}" data-id="${esc(p.id)}">
     <div class="top">
-      <img class="art" src="${esc(s.art || '/static/icon.svg')}" alt="" onerror="this.onerror=null; this.src='/static/icon.svg'">
+      <img class="art" src="${esc(coverUrl(s.art))}" alt="" onerror="this.onerror=null; this.src='/static/icon.svg'">
       <div class="grow" style="min-width:0">
         <div class="row" style="gap:8px"><span class="name">${esc(p.name)}</span>
           ${s.source ? `<span class="src ${s.playing ? 'playing' : ''}">${esc(SOURCE[s.source] || s.source)}</span>` : ''}

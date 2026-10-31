@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from .. import __version__
 from ..common import no_stale_pages, system
 from ..common.announce import HUB_TYPE, Announcer
-from ..common import sysupdates
+from ..common import imgproxy, sysupdates
 from ..common.updates import UpdateError
 from . import db, devices, https, importer, lyrics, records, records_sync, spins
 
@@ -185,6 +185,7 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
     app.state.updates = system.updates()
     app.state.sysupdates = system.sysupdates()
     sysupdates.add_routes(app, app.state.sysupdates, role="hub")
+    imgproxy.add_route(app)        # http:// pictures (station logos) for the pages on the secure address
     no_stale_pages(app)
 
     def app_version() -> str:

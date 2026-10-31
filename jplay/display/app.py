@@ -43,11 +43,11 @@ try:
     from fastapi.staticfiles import StaticFiles
     from fastapi.templating import Jinja2Templates
     from shazamio import Shazam  # noqa: F401  (fails here, with the message below, when it is missing)
-    from . import audd, history, lyrics, players, recognizer, report, touchwake
+    from . import audd, collection, history, lyrics, players, recognizer, report, touchwake
     from .. import __version__
     from ..common import hub as hubs, no_stale_pages, system
     from ..common.announce import DISPLAY_TYPE, Announcer
-    from ..common import sysupdates
+    from ..common import imgproxy, sysupdates
     from ..common.updates import UpdateError
 except Exception:
     # Imports run with stderr silenced (to hide ALSA noise); show why startup failed instead of exiting silently.
@@ -111,6 +111,7 @@ KIOSK_SERVICE = "jplay-kiosk"     # cage + Chromium on the Pi's own screen (depl
 UPDATES = system.updates()
 SYSTEM = system.sysupdates()          # Raspberry Pi OS updates (deploy/system-update.sh)
 sysupdates.add_routes(app, SYSTEM, role="display")
+imgproxy.add_route(app)        # http:// pictures for the pages on the secure address
 
 os.makedirs(STATIC_DIR, exist_ok=True)
 templates = Jinja2Templates(directory=STATIC_DIR)
@@ -654,7 +655,10 @@ MIN_PLAY_SECONDS = 20          # a song must be heard this long before it enters
 MIC_SOURCE_NAME = "Ambient Listener"
 MIC_MIN_LEVEL_DB = -60     # quieter than this (dBFS) is silence: not sent to Shazam
 MIC_ASK_AGAIN = 30         # seconds between questions while music plays that wasn't recognised
-mic_next_ask = [0.0]       # don't ask before this (the song recognised last should still be playing)
+mic_next_ask = [0.0]       # don't ask Shazam before this
+mic_song_until = [0.0]     # the song recognised last should still be playing until then: nobody is asked
+mic_prev: dict = {}        # the clip before this one (joined with it for your collection)
+collection_client = collection.Collection()   # your own music (the fingerprint service), when set up in Settings
 audd_client = audd.AudD()  # the optional backup while Shazam refuses (a token in Settings)
 
 def audd_backup(cfg):
@@ -714,22 +718,38 @@ async def background_mic_listener():
                 duration = cfg.get("mic_interval_seconds", 8)
                 rec_start = time.time()
                 audio_bytes = await loop.run_in_executor(None, record_audio, duration)
+                # This clip and the one just before it, as one longer clip for your collection (more to match on)
+                prev = mic_prev.get("wav") if rec_start - mic_prev.get("end", 0) < 2.0 else None
+                long_clip = collection.join_wavs(prev, audio_bytes) if prev else audio_bytes
+                long_start = mic_prev["start"] if prev else rec_start
+                mic_prev.update(wav=audio_bytes, start=rec_start, end=time.time())
 
                 # Only ask when the microphone hears something (silence is most of the day), and once per song:
-                # after a match, not again until the song should have ended; after no match, every 30 s.
+                # after a match, not again until the song should have ended. Unknown music: your collection
+                # (free, no limits) for every clip, Shazam every 30 s.
                 quiet_db = float(cfg.get("mic_min_level_db", MIC_MIN_LEVEL_DB))
                 now = time.time()
                 if LAST_LEVEL_DB is not None and LAST_LEVEL_DB < quiet_db:
                     out = {}
-                    mic_next_ask[0] = 0.0                     # music after a silence (a new side): ask at once
-                elif now < mic_next_ask[0]:
-                    if latest_ambient_state.get("identified"):   # still playing: the same song is still heard
-                        pending_play["heard"] = pending_play["last"] = now
-                        await _log_if_due(cfg)
+                    mic_next_ask[0] = mic_song_until[0] = 0.0   # music after a silence (a new side): ask at once
+                    mic_prev.clear()
+                elif now < mic_song_until[0] and latest_ambient_state.get("identified"):
+                    pending_play["heard"] = pending_play["last"] = now   # still playing: the same song
+                    await _log_if_due(cfg)
                     continue
                 else:
-                    out = await shazam.recognize(audio_bytes, "mic", audd_backup(cfg))
-                    mic_next_ask[0] = time.time() + MIC_ASK_AGAIN
+                    out = {}
+                    url = str(cfg.get("collection_url") or "").strip()
+                    if url:
+                        out = await collection_client.recognize(long_clip, url, str(cfg.get("collection_token") or ""))
+                        if out.get("track"):
+                            rec_start = long_start          # the offset is from the start of the long clip
+                    if not out.get("track"):
+                        if now >= mic_next_ask[0]:
+                            out = await shazam.recognize(audio_bytes, "mic", audd_backup(cfg))
+                            mic_next_ask[0] = time.time() + MIC_ASK_AGAIN
+                        elif not url:
+                            continue
                 track = out.get('track', {})
 
                 if track:
@@ -761,7 +781,8 @@ async def background_mic_listener():
                         # Where in the song we are (for the lyrics): offset at the moment the recording started
                         "offset": shazam_offset(out),
                         "heard_at": rec_start,
-                        "duration": info.get("duration"),
+                        "duration": track.get("duration") or info.get("duration"),
+                        "source": track.get("source") or "shazam",
                     }
                     # Only log once the same song has been heard for MIN_PLAY_SECONDS
                     s = latest_ambient_state
@@ -776,7 +797,8 @@ async def background_mic_listener():
                     pending_play["ids"] = (track.get("key", ""), track.get("isrc", ""))
                     # Not asked again until this song should have ended (or a silence: the needle lifted)
                     left = (s["duration"] or 0) - ((s["offset"] or 0) + (now - rec_start))
-                    mic_next_ask[0] = now + (min(600, max(MIC_ASK_AGAIN, left + 5)) if s["duration"] else 60)
+                    mic_song_until[0] = now + (min(600, max(MIC_ASK_AGAIN, left + 5)) if s["duration"] else 60)
+                    mic_next_ask[0] = mic_song_until[0]
                     await _log_if_due(cfg)
                 else:
                     now = time.time()
@@ -1090,6 +1112,15 @@ async def save_settings(request: Request):
         cfg["mic_min_level_db"] = max(-90.0, min(-10.0, float(form.get("mic_min_level_db"))))
     except (TypeError, ValueError):
         pass
+    if "collection_url" in form:
+        url = str(form.get("collection_url") or "").strip().rstrip("/")
+        if url and not url.startswith(("http://", "https://")):
+            url = "http://" + url
+        cfg["collection_url"] = url
+    if form.get("collection_token_remove") == "on":
+        cfg["collection_token"] = ""
+    elif str(form.get("collection_token") or "").strip():
+        cfg["collection_token"] = str(form.get("collection_token")).strip()
     if form.get("audd_remove") == "on":
         cfg["audd_token"] = ""
     elif str(form.get("audd_token") or "").strip():
@@ -1225,11 +1256,43 @@ async def player_page(request: Request, player_id: str):
     player = next((p for p in cfg.get("players", []) if p.get("id") == player_id), None)
     if not player:
         return RedirectResponse(url="/", status_code=303)
+    url = players.base_url(player) + "/"
+    if request.headers.get("x-forwarded-proto") == "https":     # on the secure address: the player's secure one
+        url = await asyncio.to_thread(secure_player_url, cfg, player) or url
     return templates.TemplateResponse(
         request=request,
         name="player.html",
-        context={"config": cfg, "player": player, "player_url": players.base_url(player) + "/"},
+        context={"config": cfg, "player": player, "player_url": url},
     )
+
+def secure_player_url(cfg, player):
+    """The player's https address from the hub (https://lounge.home.jplay.cloud/), or None.
+
+    A page on https may not show a page from http:// inside it, so the player page needs the player's own
+    secure address. The hub knows it (it gives every device one)."""
+    hub = hubs.known(str(cfg.get("hub") or ""))
+    if not hub:
+        return None
+    try:
+        host = str(player.get("host") or "")
+        ip = socket.gethostbyname(host) if host not in ("127.0.0.1", "localhost") else _own_ip()
+        devs = requests.get(hub.rstrip("/") + "/api/devices", timeout=6).json().get("devices", [])
+    except Exception:
+        return None
+    port = int(player.get("port") or players.DEFAULT_PORT)
+    for d in devs:
+        if d.get("kind") == "player" and d.get("address") == ip and int(d.get("port") or 0) == port \
+                and str(d.get("url") or "").startswith("https://"):
+            return d["url"]
+    return None
+
+def _own_ip():
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
 
 @app.get("/manifest.webmanifest")
 async def web_manifest():
@@ -1303,8 +1366,11 @@ async def api_info():
 @app.get("/api/recognizer")
 async def get_recognizer():
     """How the questions to Shazam go: asked, found, refused, and the wait after a refusal."""
-    return {**shazam.view(), "backup": {"name": "AudD", "on": bool(str(load_config().get("audd_token") or "").strip()),
+    cfg = load_config()
+    return {**shazam.view(), "backup": {"name": "AudD", "on": bool(str(cfg.get("audd_token") or "").strip()),
                                         **audd_client.view()},
+            "collection": {"on": bool(str(cfg.get("collection_url") or "").strip()),
+                           "url": str(cfg.get("collection_url") or ""), **collection_client.view()},
             "mic_level_db": LAST_LEVEL_DB,
             "mic_min_level_db": float(load_config().get("mic_min_level_db", MIC_MIN_LEVEL_DB))}
 
@@ -1340,7 +1406,7 @@ async def get_dashboard():
     # Served from the background poller's cache, so the page never waits on a player
     p = view_player(cfg)
     return {
-        "config": {k: v for k, v in cfg.items() if k != "audd_token"},     # the key stays on the Pi
+        "config": {k: v for k, v in cfg.items() if k not in ("audd_token", "collection_token")},   # keys stay on the Pi
         "player": player_cards.get(p["id"]) if p else None,
         "players": [{"id": x["id"], "name": x["name"]} for x in cfg.get("players", []) if x.get("enabled", True)],
         "view": p["id"] if p else "",

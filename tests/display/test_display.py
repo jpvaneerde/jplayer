@@ -117,3 +117,18 @@ def test_audd_key_is_saved_but_never_shown(client):
     assert display.load_config()["audd_token"] == "secret-key"
     client.post("/settings/save", data={"audd_remove": "on"}, follow_redirects=False)
     assert display.load_config()["audd_token"] == ""
+
+
+def test_player_page_uses_the_secure_address_on_https(client, monkeypatch):
+    with open(display.CONFIG_FILE, "w") as f:
+        json.dump({"players": [{"id": "player_1", "name": "Lounge", "host": "192.168.1.30", "port": 8080}]}, f)
+    monkeypatch.setattr(display.hubs, "known", lambda configured="": "http://192.168.1.224:8090")
+
+    class R:
+        def json(self):
+            return {"devices": [{"kind": "player", "address": "192.168.1.30", "port": 8080,
+                                 "url": "https://lounge.home.jplay.cloud/"}]}
+    monkeypatch.setattr(display.requests, "get", lambda url, timeout: R())
+    assert 'src="http://192.168.1.30:8080/"' in client.get("/player/player_1").text
+    page = client.get("/player/player_1", headers={"X-Forwarded-Proto": "https"}).text
+    assert 'src="https://lounge.home.jplay.cloud/"' in page

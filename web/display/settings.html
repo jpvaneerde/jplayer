@@ -162,6 +162,17 @@
                 Quieter than this is silence and isn't sent to Shazam. Pick a value between the level of the quiet
                 room and of music playing (both shown at <a href="/api/recognizer" style="color: inherit;">/api/recognizer</a>, "mic_level_db").
             </p>
+            <label>Your collection (fingerprint service address, optional)</label>
+            <input type="text" name="collection_url" value="{{ config.collection_url or '' }}" placeholder="http://192.168.1.240">
+            <label>Its token</label>
+            <input type="password" name="collection_token" autocomplete="off" value="" placeholder="{% if config.collection_token %}Saved (leave empty to keep){% else %}From the jplayazam-token secret{% endif %}">
+            {% if config.collection_token %}
+            <label class="checkbox-label"><input type="checkbox" name="collection_token_remove"> Remove the token</label>
+            {% endif %}
+            <p style="font-size: 0.8rem; color: #9ca3af; margin: 6px 0 0;">
+                Your own music (the fingerprint service in Kubernetes) is asked first, with a longer clip; Shazam only
+                when it doesn't know the song. How it goes: <a href="/api/recognizer" style="color: inherit;">/api/recognizer</a> ("collection").
+            </p>
             <label>AudD key (optional backup while Shazam refuses)</label>
             <input type="password" name="audd_token" autocomplete="off" value="" placeholder="{% if config.audd_token %}Saved (leave empty to keep){% else %}From dashboard.audd.io{% endif %}">
             {% if config.audd_token %}

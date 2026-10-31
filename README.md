@@ -164,6 +164,27 @@ The token is kept on the hub only (`/var/lib/jplay/hub/https/duckdns.token`, rea
 the hub by the installer) serves the certificates on ports 80 and 443 and passes each name on; the plain addresses
 (`:8080`, `:5000`, `:8090`) keep working.
 
+## Your collection as a Shazam (optional, Kubernetes)
+
+The fingerprint service (`jplay/fingerprint`) indexes your own music (the FLAC collection Plex uses) with
+[Panako](https://github.com/JorenSix/Panako) and answers the displays' microphone from it: no limits, no internet,
+your exact albums, and records that turn a little off speed are still found. The displays ask it first (with a
+longer clip, the current one and the one before), and Shazam only when it doesn't know the song.
+
+- **Image:** `.github/workflows/fingerprint.yml` builds `ghcr.io/jpvaneerde/jplayer-fingerprint` when
+  `jplay/fingerprint` or `deploy/fingerprint` change, after testing it with real Panako.
+- **Cluster:** `apps/jplayazam` in the argocd repo (Argo CD app `jplayazam`): one pod, the index on a Longhorn volume (about 0.3-0.4 MB per
+  song), your music read-only over NFS from the Synology, an address from MetalLB.
+- **Indexing:** when the pod starts and every night at 02:30: new files are fingerprinted, retagged files read
+  again, moved files keep their place, removed files are ignored. The first run takes a while for a big collection
+  (about 50x real time per CPU). `GET /api/status` shows how far it is.
+- **Displays:** Settings → Ambient Listening → *Your collection*: the service's address (`http://<EXTERNAL-IP>`) and
+  its token (the `jplayazam-token` secret). `/api/recognizer` on the display shows how the collection, Shazam and AudD answer.
+
+API: `POST /api/recognize` (a WAV clip as the body; `Authorization: Bearer <token>`), `GET /api/status`,
+`POST /api/index` (look for new music now), `POST /api/rebuild` (start the index again, tidies away removed
+songs; quick, the prints are cached), `GET /api/cover/{id}`.
+
 ## Updates
 
 One version for the whole repo (git tags `vX.Y.Z`), one updater per Pi: an update restarts every role on the Pi

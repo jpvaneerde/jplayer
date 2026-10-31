@@ -34,7 +34,10 @@ function toast(msg) {
 // A cover: one of your records goes through the hub (it has JPlay Records' token), anything else directly.
 function coverUrl(u) {
   if (!u) return '/static/icon.svg';
-  return /\/covers\//.test(u) ? `/api/cover?u=${encodeURIComponent(u)}` : u;
+  if (/\/covers\//.test(u)) return `/api/cover?u=${encodeURIComponent(u)}`;
+  // On the secure address, http:// pictures (station logos) come through the hub (else the browser warns)
+  if (location.protocol === 'https:' && /^http:\/\//i.test(u)) return `/api/img?u=${encodeURIComponent(u)}`;
+  return u;
 }
 
 // A cover that can't be shown: try the second one (data-alt: the song's own cover), then the plain icon

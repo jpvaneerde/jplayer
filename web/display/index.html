@@ -176,6 +176,8 @@
         // Only allow local paths or http(s) URLs for images
         function safeUrl(url, fallback = '/static/default_cover.png') {
             const u = String(url ?? '');
+            // On the secure address, http:// pictures come through this display (else the browser warns or blocks)
+            if (location.protocol === 'https:' && /^http:\/\//i.test(u)) return esc('/api/img?u=' + encodeURIComponent(u));
             return (u.startsWith('/') && !u.startsWith('//')) || /^https?:\/\//i.test(u) ? esc(u) : fallback;
         }
         function fmt(s) {
