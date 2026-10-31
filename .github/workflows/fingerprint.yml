@@ -1,0 +1,64 @@
+name: Fingerprint image
+
+# The fingerprint service (jplay/fingerprint) as a container for the Kubernetes cluster (Argo CD app jplayazam: apps/jplayazam in the argocd repo).
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths: ['jplay/fingerprint/**', 'jplay/__init__.py', 'deploy/fingerprint/**', 'tests/fingerprint/**', '.github/workflows/fingerprint.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/jplayer-fingerprint
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the image (for the test)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/fingerprint/Dockerfile
+          load: true
+          tags: fingerprint:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test it with real Panako (index music, recognise a room-like clip)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src --user 0 -e PANAKO_JAR=/opt/panako/panako.jar fingerprint:test \
+            sh -c "pip install --quiet pytest httpx && python -m pytest tests/fingerprint -q -p no:cacheprovider --noconftest"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/fingerprint/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
