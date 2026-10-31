@@ -129,3 +129,20 @@ def test_the_whole_service(audio, tmp_path, monkeypatch):
         time.sleep(0.3)
     st = c.get("/api/status").json()
     assert st["indexed"] == 4 and st["gone"] == 0 and st["files"] == 4
+
+
+def test_a_second_search_when_the_first_finds_nothing(tmp_path, monkeypatch):
+    """Panako's search varies a little per run: nothing found the first time -> it looks once more."""
+    (tmp_path / "music").mkdir()
+    c = TestClient(fp_app.create_app(str(tmp_path / "data"), str(tmp_path / "music"), token="", schedule=False))
+    lib = c.app.state.library
+    sid = lib.x("INSERT INTO songs (path, title, artist, album, indexed) VALUES ('a.flac', 'Song', 'Artist', 'Album', 1)")
+    answers = [[], [pk.Match(id=sid, score=30, query_start=1.0, match_start=41.0, time_factor=1.0, seconds_with_match=0.8)]]
+    calls = []
+
+    def query(clip, timeout=60):
+        calls.append(clip)
+        return answers[len(calls) - 1]
+    monkeypatch.setattr(lib.panako, "query", query)
+    r = c.post("/api/recognize", content=b"RIFF" + b"\0" * 2000).json()
+    assert r["found"] and r["song"]["title"] == "Song" and r["offset"] == 40.0 and len(calls) == 2

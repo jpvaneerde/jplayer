@@ -7,6 +7,7 @@
   INDEX_ON_START=1        also look when the service starts
   PANAKO_PROCESSORS=2     threads for fingerprinting
   MIN_SCORE=5             matches with fewer matching prints than this are ignored
+  QUERY_ATTEMPTS=2        searches per clip when nothing is found (Panako's search varies a little per run)
 """
 from __future__ import annotations
 
@@ -69,6 +70,7 @@ def create_app(data_dir: str | None = None, music_dir: str | None = None, token:
     music = Path(music_dir or os.environ.get("MUSIC_DIR", "/music"))
     token = os.environ.get("API_TOKEN", "") if token is None else token
     min_score = int(os.environ.get("MIN_SCORE", "5"))
+    attempts = max(1, int(os.environ.get("QUERY_ATTEMPTS", "2")))
     panako = Panako(data, processors=int(os.environ.get("PANAKO_PROCESSORS", "2")))
     lib = Library(data, music, panako)
     queries = asyncio.Semaphore(int(os.environ.get("PARALLEL_QUERIES", "2")))
@@ -151,28 +153,39 @@ def create_app(data_dir: str | None = None, music_dir: str | None = None, token:
             raise HTTPException(413, "Clip too long")
         stats["asked"] += 1
         started = time.monotonic()
+        def best(matches):
+            for m in matches:
+                if m.score < min_score:
+                    return None
+                song = lib.song(m.id)
+                if song and not song["gone"]:
+                    return m, song
+            return None
+
+        hit = None
         with tempfile.NamedTemporaryFile(suffix=".wav", dir=os.environ.get("TMPDIR")) as f:
             f.write(body)
             f.flush()
             async with queries:
-                try:
-                    matches = await asyncio.to_thread(panako.query, f.name)
-                except PanakoError as e:
-                    stats["last_error"] = str(e)
-                    raise HTTPException(503, str(e))
+                # Panako's search isn't fully repeatable (how it reads the decoded audio can shift its blocks a
+                # little, so the same clip scores e.g. 29 one time and 42 the next): when it finds nothing, look again.
+                for _ in range(attempts):
+                    try:
+                        hit = best(await asyncio.to_thread(panako.query, f.name))
+                    except PanakoError as e:
+                        stats["last_error"] = str(e)
+                        raise HTTPException(503, str(e))
+                    if hit:
+                        break
         stats["last_ms"] = round((time.monotonic() - started) * 1000)
-        for m in matches:
-            if m.score < min_score:
-                break
-            song = lib.song(m.id)
-            if not song or song["gone"]:
-                continue
-            stats["found"] += 1
-            return {"found": True, "offset": round(m.offset, 1), "score": m.score, "time_factor": m.time_factor,
-                    "elapsed_ms": stats["last_ms"],
-                    "song": {k: song[k] for k in ("id", "title", "artist", "album", "albumartist", "year", "track",
-                                                  "duration", "path")} | {"cover": f"/api/cover/{song['id']}"}}
-        return {"found": False, "elapsed_ms": stats["last_ms"]}
+        if not hit:
+            return {"found": False, "elapsed_ms": stats["last_ms"]}
+        m, song = hit
+        stats["found"] += 1
+        return {"found": True, "offset": round(m.offset, 1), "score": m.score, "time_factor": m.time_factor,
+                "elapsed_ms": stats["last_ms"],
+                "song": {k: song[k] for k in ("id", "title", "artist", "album", "albumartist", "year", "track",
+                                              "duration", "path")} | {"cover": f"/api/cover/{song['id']}"}}
 
     @app.get("/api/cover/{sid}")
     async def cover(sid: int):
