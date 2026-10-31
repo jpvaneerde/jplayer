@@ -112,6 +112,23 @@
     </details>
   </div>
 
+  <h2>Your collection as a Shazam</h2>
+  <div class="card" id="col-card">
+    <p class="muted small" style="margin-top: 0;">Jplayazam, the fingerprint service in Kubernetes: it knows your FLAC
+      collection and answers the displays' microphone from it (each display has its address and token under Settings →
+      Ambient Listening). It looks for new music every night by itself; here you can do it now.</p>
+    <label for="col-url">Address</label>
+    <input id="col-url" placeholder="http://192.168.1.233" style="width: 100%;">
+    <label for="col-token">Token</label>
+    <input id="col-token" type="password" autocomplete="off" style="width: 100%;">
+    <div class="row" style="margin-top: 12px;">
+      <button id="col-save">Save</button>
+      <button class="primary" id="col-index">Look for new music</button>
+      <button id="col-rebuild">Start the index over</button>
+    </div>
+    <div id="col-status" class="small" style="margin-top: 12px;"></div>
+  </div>
+
   <h2>Version &amp; updates</h2>
   <div class="card">
     <div class="row"><b id="upd-version">…</b><span id="upd-badge" class="badge"></span></div>
@@ -304,7 +321,47 @@ $('hs-off').addEventListener('click', async () => {
   try { await api('/api/https/disable', { method: 'POST' }); loadHttps(); } catch (e) { toast(e.message); }
 });
 
-loadRooms(); loadRecords(); importStatus(); loadUpdate(); loadHttps();
+let colTimer = null;
+async function loadCollection() {
+  clearTimeout(colTimer);
+  let c;
+  try { c = await api('/api/collection'); } catch (e) { $('col-status').textContent = e.message; return; }
+  if (document.activeElement !== $('col-url')) $('col-url').value = c.url || '';
+  $('col-token').placeholder = c.token_set ? 'Saved (leave empty to keep it)' : 'The jplayazam-token secret';
+  const st = c.status, ix = st && st.index;
+  const when = (t) => t ? new Date(t * 1000).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : '';
+  let html = '';
+  if (!c.url) html = '<span class="muted">Not set up.</span>';
+  else if (c.error) html = `<span style="color: var(--bad)">${esc(c.error)}</span>`;
+  else if (st) {
+    html = `<div><b>${st.indexed}</b> of <b>${st.files}</b> songs indexed${st.unreadable ? ` · ${st.unreadable} unreadable` : ''}${st.gone ? ` · ${st.gone} removed` : ''}${st.music_found ? '' : ' · <span style="color: var(--bad)">the music folder isn\'t there</span>'}</div>`;
+    if (ix.running) html += `<div>Working: ${esc(ix.phase)}${ix.todo ? ` (${ix.done} of ${ix.todo})` : ''}, since ${when(ix.started_at)}</div>`;
+    else if (ix.finished_at) {
+      const l = ix.last || {};
+      html += `<div class="muted">Last look ${when(ix.finished_at)}: ${l.new || 0} new, ${l.changed || 0} changed, ${l.moved || 0} moved, ${l.gone || 0} removed, ${l.fingerprinted || 0} fingerprinted${l.failed ? `, ${l.failed} failed` : ''}</div>`;
+    }
+    if (ix.error) html += `<div style="color: var(--bad)">${esc(ix.error)}</div>`;
+    const r = st.recognize || {};
+    if (r.asked) html += `<div class="muted">Asked ${r.asked} times, found ${r.found}${r.last_ms ? ` · last answer in ${(r.last_ms / 1000).toFixed(1)} s` : ''}</div>`;
+  }
+  $('col-status').innerHTML = html;
+  $('col-index').disabled = $('col-rebuild').disabled = !c.url || !!(ix && ix.running);
+  colTimer = setTimeout(loadCollection, ix && ix.running ? 5000 : 60000);
+}
+async function saveCollection() {
+  await api('/api/collection', { method: 'PUT', body: { url: $('col-url').value.trim(), token: $('col-token').value.trim() || null } });
+  $('col-token').value = '';
+}
+$('col-save').addEventListener('click', async () => { try { await saveCollection(); toast('Saved'); loadCollection(); } catch (e) { toast(e.message); } });
+$('col-index').addEventListener('click', async () => {
+  try { const r = await api('/api/collection/index', { method: 'POST' }); toast(r.started ? 'Looking for new music' : (r.message || 'Already busy')); setTimeout(loadCollection, 1500); } catch (e) { toast(e.message); }
+});
+$('col-rebuild').addEventListener('click', async () => {
+  if (!confirm('Start the index over? It fills again from the saved fingerprints (minutes, not hours); songs may not be found until then.')) return;
+  try { await api('/api/collection/rebuild', { method: 'POST' }); toast('Starting over'); setTimeout(loadCollection, 1500); } catch (e) { toast(e.message); }
+});
+
+loadRooms(); loadRecords(); importStatus(); loadUpdate(); loadHttps(); loadCollection();
 </script>
 </body>
 </html>

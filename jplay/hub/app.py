@@ -25,7 +25,7 @@ from ..common import no_stale_pages, system
 from ..common.announce import HUB_TYPE, Announcer
 from ..common import imgproxy, sysupdates
 from ..common.updates import UpdateError
-from . import db, devices, https, importer, lyrics, records, records_sync, spins
+from . import collection, db, devices, https, importer, lyrics, records, records_sync, spins
 
 log = logging.getLogger(__name__)
 WEB_DIR = system.WEB_DIR / "hub"
@@ -77,6 +77,11 @@ class HttpsBody(BaseModel):
     duckdns: str
     token: str | None = None        # empty/None: keep the saved token
     email: str = ""
+
+
+class CollectionBody(BaseModel):
+    url: str = ""
+    token: str | None = None        # empty/None: keep the saved token
 
 
 class SyncBody(BaseModel):
@@ -283,6 +288,23 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
     async def api_https_disable() -> dict:
         await t(https.disable)
         return await t(https.view)
+
+    # ------------------------------------------------------------ your collection as a Shazam (collection.py)
+    @app.get("/api/collection")
+    async def api_collection() -> dict:
+        return await collection.view(app.state.http)
+
+    @app.put("/api/collection")
+    async def api_collection_save(body: CollectionBody) -> dict:
+        await t(collection.save, body.url, body.token)
+        return await collection.view(app.state.http)
+
+    @app.post("/api/collection/{what}")
+    async def api_collection_action(what: str) -> dict:
+        try:
+            return await collection.action(app.state.http, what)
+        except collection.CollectionError as e:
+            raise HTTPException(400, str(e))
 
     @app.get("/api/health")
     async def health() -> dict:
