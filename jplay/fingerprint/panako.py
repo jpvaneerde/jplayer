@@ -45,20 +45,25 @@ class Match:
 
 
 class Panako:
-    def __init__(self, data_dir: str | Path, processors: int = 2, java_opts: list[str] | None = None):
+    def __init__(self, data_dir: str | Path, processors: int = 2, java_opts: list[str] | None = None,
+                 index_dir: str | Path | None = None):
+        """data_dir: Panako's cache of prints (keep it: fingerprinting takes hours). index_dir: its LMDB database,
+        which must be on a local disk (LMDB isn't safe on NFS); rebuilt from the cache when it's gone."""
         self.data_dir = Path(data_dir)
+        self.index_dir = Path(index_dir) if index_dir else self.data_dir
         self.processors = max(1, processors)
         self.java_opts = java_opts if java_opts is not None else os.environ.get("JAVA_OPTS", "").split()
 
     def _config(self) -> list[str]:
-        return ["STRATEGY=PANAKO", f"PANAKO_LMDB_FOLDER={self.data_dir / 'panako_db'}",
+        return ["STRATEGY=PANAKO", f"PANAKO_LMDB_FOLDER={self.index_dir / 'panako_db'}",
                 f"PANAKO_CACHE_FOLDER={self.data_dir / 'panako_cache'}", f"AVAILABLE_PROCESSORS={self.processors}",
                 "CHECK_DUPLICATE_FILE_NAMES=FALSE", *MATCH_SETTINGS, *os.environ.get("PANAKO_SETTINGS", "").split()]
 
     def _run(self, args: list[str], timeout: float) -> str:
         cmd = JAVA + self.java_opts + ["-jar", JAR] + args + self._config()
         try:
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=self.data_dir)
+            self.index_dir.mkdir(parents=True, exist_ok=True)
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=self.index_dir)
         except subprocess.TimeoutExpired as e:
             raise PanakoError(f"Panako took longer than {timeout:.0f} s") from e
         except FileNotFoundError as e:
@@ -72,8 +77,8 @@ class Panako:
         """Fingerprint these files (links named <id>.<ext>). Returns the ids Panako has now (stored or already)."""
         if not paths:
             return set()
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        lst = self.data_dir / "store-list.txt"
+        self.index_dir.mkdir(parents=True, exist_ok=True)
+        lst = self.index_dir / "store-list.txt"
         lst.write_text("\n".join(paths) + "\n")
         out = self._run(["store", str(lst)], timeout)
         done = set()
@@ -105,4 +110,8 @@ class Panako:
     def clear(self) -> None:
         """Empty the index (the prints stay in the cache, so storing again is quick)."""
         import shutil
-        shutil.rmtree(self.data_dir / "panako_db", ignore_errors=True)
+        shutil.rmtree(self.index_dir / "panako_db", ignore_errors=True)
+
+    def has_index(self) -> bool:
+        """Is Panako's database there? (After a restart on a new node, or a fresh local disk: no.)"""
+        return (self.index_dir / "panako_db" / "data.mdb").exists()

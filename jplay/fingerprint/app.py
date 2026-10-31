@@ -1,6 +1,7 @@
 """The fingerprint service's API (see __init__.py). Settings come from the environment:
 
-  DATA_DIR=/data          the index (Panako's database and cache, the library, links)
+  DATA_DIR=/data          what must last: Panako's cache of prints and the library (NFS is fine)
+  INDEX_DIR=/index        Panako's database (LMDB): a local disk, not NFS; rebuilt from the cache when it's gone
   MUSIC_DIR=/music        your music, read-only
   API_TOKEN=...           asked as "Authorization: Bearer ..." for recognize/index/rebuild (none: open)
   INDEX_TIME=02:30        the nightly look for new files (local time, TZ)
@@ -71,8 +72,10 @@ def create_app(data_dir: str | None = None, music_dir: str | None = None, token:
     token = os.environ.get("API_TOKEN", "") if token is None else token
     min_score = int(os.environ.get("MIN_SCORE", "5"))
     attempts = max(1, int(os.environ.get("QUERY_ATTEMPTS", "2")))
-    panako = Panako(data, processors=int(os.environ.get("PANAKO_PROCESSORS", "2")))
+    index = Path(os.environ.get("INDEX_DIR") or data)
+    panako = Panako(data, processors=int(os.environ.get("PANAKO_PROCESSORS", "2")), index_dir=index)
     lib = Library(data, music, panako)
+    restoring = lib.restore()
     queries = asyncio.Semaphore(int(os.environ.get("PARALLEL_QUERIES", "2")))
     stats = {"asked": 0, "found": 0, "last_ms": None, "last_error": ""}
 
@@ -86,7 +89,7 @@ def create_app(data_dir: str | None = None, music_dir: str | None = None, token:
             log.warning("Index failed: %s: %s", type(e).__name__, e)
 
     async def nightly() -> None:
-        if os.environ.get("INDEX_ON_START", "1") == "1":
+        if restoring or os.environ.get("INDEX_ON_START", "1") == "1":
             await run_index()
         hh, mm = (int(x) for x in os.environ.get("INDEX_TIME", "02:30").split(":"))
         while True:

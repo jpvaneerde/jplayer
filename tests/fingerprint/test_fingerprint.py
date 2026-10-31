@@ -146,3 +146,27 @@ def test_a_second_search_when_the_first_finds_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(lib.panako, "query", query)
     r = c.post("/api/recognize", content=b"RIFF" + b"\0" * 2000).json()
     assert r["found"] and r["song"]["title"] == "Song" and r["offset"] == 40.0 and len(calls) == 2
+
+
+@real
+def test_a_new_pod_restores_the_index_from_the_cache(audio, tmp_path, monkeypatch):
+    """The database lives on the node's own disk (LMDB isn't safe on NFS); on a new node it comes back from the
+    cache of prints on the NFS side, without decoding the music again."""
+    monkeypatch.setattr(pk, "JAR", JAR)
+    music, data, index = tmp_path / "music", tmp_path / "data", tmp_path / "index"
+    for n in range(1, 4):
+        flac(audio, n, music / f"0{n} Song {n}.flac")
+    monkeypatch.setenv("INDEX_DIR", str(index))
+    c = TestClient(fp_app.create_app(str(data), str(music), token="", schedule=False))
+    assert c.app.state.library.index()["fingerprinted"] == 3
+    assert sorted(p.name for p in data.iterdir()) == ["library.db", "panako_cache"]   # what must last
+    wav = (audio / "room3.wav").read_bytes()
+    assert c.post("/api/recognize", content=wav).json()["song"]["title"] == "Song 3"
+
+    shutil.rmtree(index)                                    # the pod starts on another node
+    c2 = TestClient(fp_app.create_app(str(data), str(music), token="", schedule=False))
+    assert c2.get("/api/status").json()["waiting"] == 3
+    stats = c2.app.state.library.index()
+    assert stats["fingerprinted"] == 3 and stats["new"] == 0
+    assert (index / "links").is_dir() and (index / "panako_db" / "data.mdb").exists()
+    assert c2.post("/api/recognize", content=wav).json()["song"]["title"] == "Song 3"

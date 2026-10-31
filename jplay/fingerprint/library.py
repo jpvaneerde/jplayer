@@ -76,10 +76,10 @@ class Library:
     def __init__(self, data_dir: str | Path, music_dir: str | Path, panako: Panako):
         self.data_dir = Path(data_dir)
         self.music_dir = Path(music_dir)
-        self.links = self.data_dir / "links"
+        self.links = panako.index_dir / "links"         # local, made again at every start (see restore)
         self.panako = panako
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.links.mkdir(exist_ok=True)
+        self.links.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(self.data_dir / "library.db", check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
@@ -130,6 +130,23 @@ class Library:
             (self.links / f"{sid}{Path(rel).suffix.lower()}").unlink(missing_ok=True)
         except OSError:
             pass
+
+    def restore(self) -> int:
+        """At start: the links again, and when Panako's database is gone (a new pod, a fresh local disk), every song
+        to be stored again. That's quick: the prints come from Panako's cache, nothing is decoded again.
+        Returns how many songs have to go back in."""
+        for r in self.q("SELECT id, path FROM songs WHERE gone = 0"):
+            dst = self.links / f"{r['id']}{Path(r['path']).suffix.lower()}"
+            if not dst.is_symlink():
+                self.link(r["id"], r["path"])
+        if self.panako.has_index():
+            return 0
+        n = len(self.q("SELECT id FROM songs WHERE gone = 0 AND indexed = 1"))
+        self.x("UPDATE songs SET indexed = 0, tries = 0 WHERE gone = 0")
+        self.x("DELETE FROM songs WHERE gone = 1")          # their prints aren't wanted in the new database
+        if n:
+            log.info("Panako's database is gone: %d songs go back in from the cache", n)
+        return n
 
     # ---------------------------------------------------------------- reading
     def song(self, sid: int) -> dict | None:
