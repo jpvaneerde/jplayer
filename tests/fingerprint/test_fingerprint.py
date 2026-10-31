@@ -170,3 +170,48 @@ def test_a_new_pod_restores_the_index_from_the_cache(audio, tmp_path, monkeypatc
     assert stats["fingerprinted"] == 3 and stats["new"] == 0
     assert (index / "links").is_dir() and (index / "panako_db" / "data.mdb").exists()
     assert c2.post("/api/recognize", content=wav).json()["song"]["title"] == "Song 3"
+
+
+def test_a_hanging_batch_is_tried_file_by_file(tmp_path, monkeypatch):
+    """One file can make Panako wait forever: the batch is stopped and the files tried one by one; only the bad
+    one is left out. Only FLAC is fingerprinted."""
+    from jplay.fingerprint import library
+    music = tmp_path / "music"
+    music.mkdir()
+    for n in range(1, 5):
+        (music / f"{n}.flac").write_bytes(b"x" * 100)
+    (music / "old.mp3").write_bytes(b"x" * 100)
+    p = pk.Panako(tmp_path / "data", index_dir=tmp_path / "index")
+    lib = library.Library(tmp_path / "data", music, p)
+    monkeypatch.setattr(library, "read_tags", lambda path: {"title": path, "artist": "", "album": "", "albumartist": "",
+                                                           "year": "", "track": "", "duration": None})
+    lib.x("INSERT INTO songs (path, title) VALUES ('older.mp3', 'an mp3 from before')")
+    calls = []
+
+    def store(paths, timeout=1800):
+        calls.append(len(paths))
+        if len(paths) > 1:
+            raise pk.PanakoTimeout("Panako took longer than 900 s")
+        sid = int(Path(paths[0]).stem)
+        if Path(lib.song(sid)["path"]).stem == "3":
+            raise pk.PanakoTimeout("Panako took longer than 600 s")
+        return {sid}
+    monkeypatch.setattr(p, "store", store)
+    stats = lib.index()
+    assert stats["fingerprinted"] == 3 and stats["failed"] == 1 and calls == [4, 1, 1, 1, 1]
+    assert [r["path"] for r in lib.q("SELECT path FROM songs ORDER BY path")] == ["1.flac", "2.flac", "3.flac", "4.flac"]
+    assert "3.flac" in lib.run["error"]
+
+
+def test_a_time_limit_stops_panako_and_its_ffmpeg(tmp_path, monkeypatch):
+    """Over the time limit, Java and every process it started (ffmpeg) are stopped."""
+    marker = tmp_path / "child.pid"
+    monkeypatch.setattr(pk, "JAVA", ["sh", "-c", f'sleep 60 & echo $! > {marker}; wait', "--"])
+    p = pk.Panako(tmp_path / "data", index_dir=tmp_path / "index")
+    started = time.time()
+    with pytest.raises(pk.PanakoTimeout):
+        p._run(["store", "x"], timeout=1)
+    assert time.time() - started < 15
+    child = int(marker.read_text())
+    time.sleep(0.3)
+    assert not Path(f"/proc/{child}").exists() or "Z" in Path(f"/proc/{child}/stat").read_text().split()[2]

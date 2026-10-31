@@ -29,6 +29,23 @@ class PanakoError(Exception):
     pass
 
 
+class PanakoTimeout(PanakoError):
+    pass
+
+
+def _kill(proc: subprocess.Popen) -> None:
+    """Stop a process and everything it started (Panako starts ffmpeg)."""
+    import signal
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        proc.kill()
+    try:
+        proc.communicate(timeout=10)
+    except Exception:
+        pass
+
+
 @dataclass
 class Match:
     id: int
@@ -61,20 +78,28 @@ class Panako:
 
     def _run(self, args: list[str], timeout: float) -> str:
         cmd = JAVA + self.java_opts + ["-jar", JAR] + args + self._config()
+        self.index_dir.mkdir(parents=True, exist_ok=True)
         try:
-            self.index_dir.mkdir(parents=True, exist_ok=True)
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=self.index_dir)
-        except subprocess.TimeoutExpired as e:
-            raise PanakoError(f"Panako took longer than {timeout:.0f} s") from e
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    text=True, cwd=self.index_dir, start_new_session=True)
         except FileNotFoundError as e:
             raise PanakoError("Java isn't installed") from e
-        if res.returncode != 0:
-            err = [ln for ln in res.stderr.splitlines() if "Exception" in ln or "Error" in ln][-3:]
-            raise PanakoError(f"Panako failed: {' '.join(err) or res.stderr[-300:]}")
-        return res.stdout
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            _kill(proc)                                  # Java and the ffmpeg it started
+            raise PanakoTimeout(f"Panako took longer than {timeout:.0f} s") from e
+        if proc.returncode != 0:
+            lines = [ln for ln in err.splitlines() if "Exception" in ln or "Error" in ln][-3:]
+            raise PanakoError(f"Panako failed: {' '.join(lines) or err[-300:]}")
+        return out
 
-    def store(self, paths: list[str], timeout: float = 6 * 3600) -> set[int]:
-        """Fingerprint these files (links named <id>.<ext>). Returns the ids Panako has now (stored or already)."""
+    def cached(self, sid: int) -> bool:
+        """Are this song's prints in Panako's cache? (Then storing it again doesn't decode anything.)"""
+        return (self.data_dir / "panako_cache" / f"{sid}.tdb").exists()
+
+    def store(self, paths: list[str], timeout: float = 1800) -> set[int]:
+        """Fingerprint these files (named <id>.<ext>). Returns the ids Panako has now (stored or already)."""
         if not paths:
             return set()
         self.index_dir.mkdir(parents=True, exist_ok=True)

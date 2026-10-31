@@ -17,11 +17,15 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from .panako import Panako, PanakoError
+from .panako import Panako, PanakoError, PanakoTimeout
 
 log = logging.getLogger(__name__)
-AUDIO = {".flac", ".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wav", ".aif", ".aiff", ".wma", ".ape", ".wv"}
-BATCH = 200            # files per Panako run
+# Which files are fingerprinted: FLAC only (your lossless collection; MP3s and the like are left alone).
+# AUDIO_TYPES (environment) can widen it, e.g. "flac,mp3"
+AUDIO = {"." + t.strip().lstrip(".").lower() for t in os.environ.get("AUDIO_TYPES", "flac").split(",") if t.strip()}
+BATCH = 25             # files per Panako run
+BATCH_TIMEOUT = 900    # seconds for a batch; over that, the files are tried one by one
+FILE_TIMEOUT = 600     # seconds for one file (a damaged one can make Panako wait forever)
 MAX_TRIES = 3          # a file Panako can't read is left after this many tries
 
 SCHEMA = """
@@ -187,6 +191,11 @@ class Library:
         self.run.update(running=True, phase="looking for files", done=0, todo=0, started_at=time.time(), error="")
         try:
             found = self.scan()
+            # Songs of a kind that isn't fingerprinted (any more): out of the list altogether, not "gone"
+            for r in self.q("SELECT id, path FROM songs"):
+                if Path(r["path"]).suffix.lower() not in AUDIO:
+                    self.unlink(r["id"], r["path"])
+                    self.x("DELETE FROM songs WHERE id = ?", r["id"])
             known = {r["path"]: dict(r) for r in self.q("SELECT * FROM songs")}
             now = time.time()
             # Gone first, so a moved file can take over its number
@@ -242,9 +251,19 @@ class Library:
             self.run.update(phase="fingerprinting", todo=len(pending))
             for i in range(0, len(pending), BATCH):
                 batch = pending[i:i + BATCH]
-                paths = [str(self.links / f"{r['id']}{Path(r['path']).suffix.lower()}") for r in batch]
+                link = {r["id"]: str(self.links / f"{r['id']}{Path(r['path']).suffix.lower()}") for r in batch}
                 try:
-                    done = self.panako.store(paths)
+                    done = self.panako.store(list(link.values()), timeout=BATCH_TIMEOUT)
+                except PanakoTimeout:
+                    # One file hangs Panako: try them one by one, so only that one is left out
+                    log.warning("Panako: batch of %d took too long, trying the files one by one", len(batch))
+                    done = set()
+                    for r in batch:
+                        try:
+                            done |= self.panako.store([link[r["id"]]], timeout=FILE_TIMEOUT)
+                        except PanakoError as e:
+                            log.warning("Panako: %s: %s", r["path"], e)
+                            self.run["error"] = f"{r['path']}: {e}"
                 except PanakoError as e:
                     log.warning("Panako: %s", e)
                     self.run["error"] = str(e)
