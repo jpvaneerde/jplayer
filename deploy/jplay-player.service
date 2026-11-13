@@ -13,9 +13,10 @@ ExecStart=/opt/jplayer/.venv/bin/python -m jplay.player --config /etc/jplay/conf
 Environment=PYTHONUNBUFFERED=1
 RuntimeDirectory=jplay
 StateDirectory=jplay
-# Audio first: a little more CPU priority than the rest of the system.
+# Audio first: a little more CPU priority than the rest of the system, and the last thing killed when memory runs out.
 Nice=-10
-Restart=on-failure
+OOMScoreAdjust=-500
+Restart=always
 RestartSec=3
 # Stopping takes a few seconds at most; never let a restart hang.
 TimeoutStopSec=15

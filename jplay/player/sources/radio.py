@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from ..core.models import Capabilities, PlayState
+from ...common.tasks import spawn
 from .base import SourceError
 from .engine_source import EngineSource
 
@@ -161,7 +162,7 @@ class RadioSource(EngineSource):
         self._show_station(station, PlayState.LOADING)
         await self.engine.command("set_property", "pause", False)
         await self.engine.command("loadfile", station["url"], "replace")
-        asyncio.create_task(self._count_click(station["uuid"]))
+        spawn(self._count_click(station["uuid"]), "radio-click")
 
     async def play(self) -> None:
         if self.station is None:

@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from ..core.models import Capabilities, PlayState
+from ...common.tasks import spawn
 from .base import SourceError
 from .engine_source import EngineSource
 
@@ -339,9 +340,9 @@ class CdSource(EngineSource):
         # Start reading straight away. This doesn't touch playback: whatever plays keeps playing.
         self._read_task = asyncio.create_task(self._read_loop(), name="cd-read")
         self.ctx.manager.notify(True)
-        asyncio.create_task(self._lookup_metadata(disc_id))
+        spawn(self._lookup_metadata(disc_id), "cd-metadata")
         if self.cfg.get("autoplay", False):
-            asyncio.create_task(self._autoplay(toc[0]["number"]))
+            spawn(self._autoplay(toc[0]["number"]), "cd-autoplay")
 
     async def _autoplay(self, number: int) -> None:
         try:

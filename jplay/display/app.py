@@ -166,7 +166,7 @@ def is_local_request(request: Request) -> bool:
 
 def is_service_active(service_name):
     try:
-        res = subprocess.run(["systemctl", "is-active", service_name], capture_output=True, text=True)
+        res = subprocess.run(["systemctl", "is-active", service_name], capture_output=True, text=True, timeout=5)
         return res.stdout.strip() == "active"
     except Exception:
         return False
@@ -467,27 +467,41 @@ def resolve_mic(cfg):
         return idx, dev, f"'{dev['label']}' (device {idx})"
     return None, None, f"device {idx} is not an input; using the system default input"
 
+MIC_STUCK_AFTER = 15      # seconds past the clip's length: the microphone (or its USB driver) hangs
+_mic_rate = {}            # device -> the sample rate that worked last time (tried first, so no failed tries)
+
+
+class MicTimeout(RuntimeError):
+    """The microphone stopped delivering sound (unplugged, or its USB driver hangs)."""
+
+
+def _record(frames, sample_rate, device, duration):
+    """One clip, or MicTimeout when the microphone stops delivering (sd.wait() would wait forever)."""
+    recording = sd.rec(frames, samplerate=sample_rate, channels=1, dtype="int16", device=device)
+    deadline = time.monotonic() + duration + MIC_STUCK_AFTER
+    while sd.get_stream().active:
+        if time.monotonic() > deadline:
+            sd.stop(ignore_errors=True)
+            raise MicTimeout(f"the microphone gave no sound for {duration + MIC_STUCK_AFTER:.0f} s")
+        time.sleep(0.1)
+    sd.wait()
+    return recording
+
+
 def record_audio(duration):
+    # No stderr juggling here: it is process-wide, and with the microphone recording nearly all the time it hid
+    # every traceback of the other threads. ALSA's own noise is already silenced (snd_lib_error_set_handler, above).
     cfg = load_config()
     MIC_DEVICE, dev, _ = resolve_mic(cfg)
 
-    # Configured rate first, then the mic's own rate and standard webcam rates as fallbacks
-    rates = [to_int(cfg.get("sample_rate"), 16000)]
+    # The rate that worked last time first, then the configured one, the mic's own and standard webcam rates
+    rates = [r for r in (_mic_rate.get(MIC_DEVICE), to_int(cfg.get("sample_rate"), 16000)) if r]
     rates += [r for r in ((dev or {}).get("rate"), 16000, 48000, 44100) if r and r not in rates]
+    rates = list(dict.fromkeys(rates))
     for sample_rate in rates:
-        devnull = os.open(os.devnull, os.O_WRONLY)
-        old_stderr = os.dup(2)
-        os.dup2(devnull, 2)
-
         try:
-            recording = sd.rec(
-                int(duration * sample_rate),
-                samplerate=sample_rate,
-                channels=1,
-                dtype="int16",
-                device=MIC_DEVICE,
-            )
-            sd.wait()
+            recording = _record(int(duration * sample_rate), sample_rate, MIC_DEVICE, duration)
+            _mic_rate[MIC_DEVICE] = sample_rate
             global LAST_LEVEL_DB
             rms = float(np.sqrt(np.mean(np.square(recording.astype(np.float32))))) if recording.size else 0.0
             LAST_LEVEL_DB = round(20 * np.log10(rms / 32768 + 1e-9), 1)
@@ -502,12 +516,11 @@ def record_audio(duration):
 
             return wav_io.getvalue()
 
+        except MicTimeout:
+            raise                      # another rate won't help a microphone that hangs
         except Exception:
+            _mic_rate.pop(MIC_DEVICE, None)
             continue
-        finally:
-            os.dup2(old_stderr, 2)
-            os.close(old_stderr)
-            os.close(devnull)
 
     raise RuntimeError(
         "Failed to capture audio at supported sample rates (16kHz, 48kHz, 44.1kHz)."
@@ -717,7 +730,14 @@ async def background_mic_listener():
                 loop = asyncio.get_event_loop()
                 duration = cfg.get("mic_interval_seconds", 8)
                 rec_start = time.time()
-                audio_bytes = await loop.run_in_executor(None, record_audio, duration)
+                try:
+                    audio_bytes = await asyncio.wait_for(loop.run_in_executor(None, record_audio, duration),
+                                                         to_int(duration, 8) + MIC_STUCK_AFTER + 30)
+                except asyncio.TimeoutError:
+                    # Stuck inside PortAudio (even stopping it hangs): only a fresh process gets the microphone
+                    # back. systemd starts the display again in 5 seconds.
+                    print("Microphone stuck inside the audio driver; restarting the display service", flush=True)
+                    os._exit(3)
                 # This clip and the one just before it, as one longer clip for your collection (more to match on)
                 prev = mic_prev.get("wav") if rec_start - mic_prev.get("end", 0) < 2.0 else None
                 long_clip = collection.join_wavs(prev, audio_bytes) if prev else audio_bytes
@@ -1234,7 +1254,7 @@ async def reboot_system(request: Request):
     if not is_local_request(request):
         return JSONResponse({"error": "Only allowed from the Pi itself"}, status_code=403)
     try:
-        subprocess.run(["sudo", "reboot"], check=True)
+        subprocess.run(["sudo", "-n", "reboot"], check=True, timeout=30)
         return {"status": "Rebooting..."}
     except Exception as e:
         return {"error": str(e)}
@@ -1244,7 +1264,7 @@ async def shutdown_system(request: Request):
     if not is_local_request(request):
         return JSONResponse({"error": "Only allowed from the Pi itself"}, status_code=403)
     try:
-        subprocess.run(["sudo", "shutdown", "-h", "now"], check=True)
+        subprocess.run(["sudo", "-n", "shutdown", "-h", "now"], check=True, timeout=30)
         return {"status": "Shutting down..."}
     except Exception as e:
         return {"error": str(e)}

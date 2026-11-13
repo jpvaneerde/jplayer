@@ -28,6 +28,11 @@ Environment=WLR_LIBINPUT_NO_DEVICES=1
 ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do curl -sf http://127.0.0.1:5000/api/version >/dev/null && exit 0; sleep 1; done; exit 0'
 ExecStart=/usr/bin/cage -d -s -- /bin/sh /opt/jplayer/deploy/chromium-kiosk.sh
 Restart=always
+# When memory runs out, this goes first (it starts again in 5 s), not the player or the hub; and it may
+# never take more than half the memory (it slows down at 40%).
+OOMScoreAdjust=500
+MemoryHigh=40%
+MemoryMax=50%
 RestartSec=5
 
 [Install]

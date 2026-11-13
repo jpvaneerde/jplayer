@@ -18,6 +18,7 @@ from typing import Any
 from urllib.parse import quote
 
 from ..core.models import Capabilities, PlayState
+from ...common.tasks import spawn
 from .base import SourceError
 from .engine_source import EngineSource
 
@@ -120,7 +121,7 @@ class PlexSource(EngineSource):
             self.set_available(False, "Not connected to a Plex server yet: Plex → Connect")
             return
         self.set_available(True)
-        asyncio.create_task(self._probe())
+        spawn(self._probe(), "plex-probe")
 
     async def _probe(self) -> None:
         try:
@@ -554,7 +555,7 @@ class PlexSource(EngineSource):
         t = self.queue[index]
         duration = t["duration"] or 0
         if duration and played >= min(duration * 0.5, 240):
-            asyncio.create_task(self._scrobble(t["key"]))
+            spawn(self._scrobble(t["key"]), "plex-scrobble")
 
     async def _scrobble(self, key: str) -> None:
         try:

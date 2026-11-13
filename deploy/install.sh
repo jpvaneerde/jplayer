@@ -57,10 +57,95 @@ units() {
   for u in jplay-player jplay-display jplay-hub jplay-kiosk; do
     sed "s#/opt/jplayer#$REPO#g" "$REPO/deploy/$u.service" > "/etc/systemd/system/$u.service"
   done
+  # A nightly fresh start for Chromium on the Pi's own screen (only when it runs), and the power check
+  cat > /etc/systemd/system/jplay-kiosk-restart.service <<UNIT
+[Unit]
+Description=Fresh start for the browser on the Pi's own screen (it grows over days)
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl try-restart jplay-kiosk.service
+UNIT
+  cat > /etc/systemd/system/jplay-kiosk-restart.timer <<UNIT
+[Unit]
+Description=Restart the browser on the Pi's own screen every night
+[Timer]
+OnCalendar=*-*-* 04:40
+RandomizedDelaySec=10min
+[Install]
+WantedBy=timers.target
+UNIT
+  cat > /etc/systemd/system/jplay-power-check.service <<UNIT
+[Unit]
+Description=Note too little power or heat (vcgencmd get_throttled) for the System card
+[Service]
+Type=oneshot
+Environment=STATE_DIR=$STATE
+ExecStart=/bin/bash $REPO/deploy/power-check.sh
+UNIT
+  cat > /etc/systemd/system/jplay-power-check.timer <<UNIT
+[Unit]
+Description=Check the Pi's power and temperature every few minutes
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=3min
+[Install]
+WantedBy=timers.target
+UNIT
   install -m 644 "$REPO/deploy/90-jplay-backlight.rules" /etc/udev/rules.d/90-jplay-backlight.rules
   sed "s#/var/lib/jplay#$STATE#g" "$REPO/deploy/99-jplay-touch.rules" > /etc/udev/rules.d/99-jplay-touch.rules
   udevadm control --reload 2>/dev/null || true
   systemctl daemon-reload
+  systemctl enable --now jplay-kiosk-restart.timer jplay-power-check.timer >/dev/null 2>&1 || true
+}
+
+stability() {
+  # What keeps a Pi going on its own, and tells you afterwards why it stopped:
+  # - the hardware watchdog: a Pi that locks up restarts by itself (the Pi's watchdog allows at most 15 s)
+  # - the journal kept across restarts (capped), so `journalctl -b -1` shows the last moments before a crash
+  # - swap in compressed memory (zram) instead of on the SD card, so a full memory doesn't freeze the Pi
+  install -d /etc/systemd/system.conf.d /etc/systemd/journald.conf.d
+  local wd='[Manager]
+RuntimeWatchdogSec=15
+RebootWatchdogSec=2min'
+  if [[ "$(cat /etc/systemd/system.conf.d/jplay-watchdog.conf 2>/dev/null)" != "$wd" ]]; then
+    printf '%s\n' "$wd" > /etc/systemd/system.conf.d/jplay-watchdog.conf
+    systemctl daemon-reexec || true
+    echo "Hardware watchdog: on"
+  fi
+
+  local jc='[Journal]
+Storage=persistent
+SystemMaxUse=50M
+SystemKeepFree=500M
+MaxRetentionSec=1month'
+  if [[ "$(cat /etc/systemd/journald.conf.d/jplay.conf 2>/dev/null)" != "$jc" ]]; then
+    printf '%s\n' "$jc" > /etc/systemd/journald.conf.d/jplay.conf
+    install -d -m 2755 -g systemd-journal /var/log/journal 2>/dev/null || install -d /var/log/journal
+    systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
+    systemctl restart systemd-journald || true
+    echo "Journal: kept across restarts (at most 50 MB)"
+  fi
+
+  # Raspberry Pi OS Trixie already swaps to zram (rpi-swap); Bookworm swaps to a file on the SD card
+  if [[ ! -e /etc/rpi/swap.conf ]] && ! dpkg -s rpi-swap >/dev/null 2>&1; then
+    if ! dpkg -s systemd-zram-generator >/dev/null 2>&1; then
+      apt-get install -y -q --no-install-recommends systemd-zram-generator >/dev/null 2>&1 \
+        || { echo "(zram isn't available here; keeping the swap file)"; return 0; }
+    fi
+    local zc='[zram0]
+zram-size = min(ram / 2, 2048)
+compression-algorithm = zstd
+swap-priority = 100'
+    if [[ "$(cat /etc/systemd/zram-generator.conf 2>/dev/null)" != "$zc" ]]; then
+      printf '%s\n' "$zc" > /etc/systemd/zram-generator.conf
+      systemctl daemon-reload
+      systemctl restart systemd-zram-setup@zram0.service 2>/dev/null || true
+      if systemctl list-unit-files dphys-swapfile.service >/dev/null 2>&1; then
+        systemctl disable --now dphys-swapfile.service >/dev/null 2>&1 || true
+      fi
+      echo "Swap: in compressed memory (zram) instead of on the SD card"
+    fi
+  fi
 }
 
 nginx_include() {
@@ -93,6 +178,7 @@ if [[ -n "$UNITS_ONLY" ]]; then
   # The updater runs this after an update that changed the systemd files: put them, the sudo rules and the
   # updaters' units in place (nothing else changes)
   units
+  stability
   if [[ -f /etc/jplay/roles ]]; then
     # A hub that came from an older version: nginx for the secure address
     if has hub && ! command -v nginx >/dev/null; then
@@ -222,6 +308,8 @@ fi
 # ------------------------------------------------------------------ systemd
 say "Services"
 units
+say "Stability (watchdog, journal, swap)"
+stability
 for role in player display hub; do
   if has "$role"; then
     systemctl enable "jplay-$role.service" >/dev/null 2>&1

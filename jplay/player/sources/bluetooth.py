@@ -14,6 +14,7 @@ import shutil
 from typing import Any
 
 from ..core.models import Capabilities, PlayState
+from ...common.tasks import spawn
 from .base import Source, SourceError
 
 log = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ class BluetoothSource(Source):
         self.set_available(True)
         # A phone may already be streaming when we start.
         if any(t.get("State") in ("pending", "active") for t in self.transports.values()):
-            asyncio.create_task(self._claim())
+            spawn(self._claim(), "bt-claim")
 
     async def shutdown(self) -> None:
         await self._stop_aplay()
@@ -184,7 +185,7 @@ class BluetoothSource(Source):
                     self._transport_changed(path)
                     if not self.transports and self.active:
                         # The phone disconnected: stop the audio path, the player is idle again.
-                        asyncio.get_running_loop().create_task(self._phone_left())
+                        spawn(self._phone_left(), "bt-phone-left")
                 if "org.bluez.MediaPlayer1" in ifaces:
                     self.players.pop(path, None)
                 self.ctx.manager.notify(True)
@@ -195,7 +196,7 @@ class BluetoothSource(Source):
         state = self.transports.get(path, {}).get("State")
         if state in ("pending", "active"):
             if self.available:
-                asyncio.get_running_loop().create_task(self._claim())
+                spawn(self._claim(), "bt-claim")
             if state == "active":
                 self.update(state=PlayState.PLAYING)
         elif not any(t.get("State") in ("pending", "active") for t in self.transports.values()):

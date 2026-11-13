@@ -797,10 +797,18 @@ const sysUpdates = {
     else if (st.updates) { badge = `${st.updates} update${st.updates === 1 ? "" : "s"}`; tone = "new"; }
     else if (st.reboot_needed) { badge = "Restart needed"; tone = "new"; line = "An update is finished once the Pi restarts."; }
     const busy = away || st.in_progress;
+    // Power and heat: too little power (supply or cable) is the most common reason a Pi crashes
+    const pw = st.power || {};
+    const fix = ". Too little power makes a Pi crash: try another power supply or cable.";
+    const power = pw.now?.length ? `⚠ Now: ${pw.now.join(", ")}${fix}`
+      : pw.since_boot?.length ? `⚠ Since the Pi started: ${pw.since_boot.join(", ")}${fix}`
+      : pw.last_event ? `Power: fine now. Last problem ${ago(pw.last_event.at)}: ${pw.last_event.what}`
+      : pw.available ? "Power and temperature: fine" : "";
     this.el.replaceChildren(...kids(
       h("h2", {}, "System (Raspberry Pi OS)"),
       h("div", { class: "upd-line" }, h("span", { class: "upd-version" }, st.os || "Raspberry Pi OS"), h("span", { class: `upd-badge ${tone}` }, badge)),
       line ? h("p", { class: "hint" }, line) : null,
+      power ? h("p", { class: "hint", style: power.startsWith("⚠") ? "color:#fbbf24" : "" }, power) : null,
       st.updates && !busy ? h("p", { class: "hint" }, `Waiting: ${st.packages.slice(0, 12).join(", ")}${st.packages.length > 12 ? "…" : ""}`) : null,
       st.supported ? h("div", { class: "upd-buttons" },
         st.updates && !busy ? h("button", { class: "btn primary", onclick: () => confirm(`Install ${st.updates} system updates? Music may stop for a moment; the Pi restarts afterwards if an update needs it (about a minute).`) && this.act("POST", "/system/install", { reboot: true }) }, "Install updates") : null,

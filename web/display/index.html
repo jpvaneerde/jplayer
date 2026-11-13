@@ -49,6 +49,10 @@
         /* Screen "off" on a screen the Pi can't switch off: black, until a touch or a song */
         #blackout { position: fixed; inset: 0; background: #000; z-index: 50; display: none; }
         #blackout.on { display: block; }
+        /* Screen blacked out: stop the blur, the spinning record and the bars underneath (the GPU works for nothing) */
+        html.screen-off #panel { visibility: hidden; }
+        html.screen-off .backdrop { filter: none; }
+        html.screen-off *, html.screen-off *::before, html.screen-off *::after { animation-play-state: paused !important; }
         .menu a, .menu button { display: flex; align-items: center; gap: 0.6em; width: 100%; box-sizing: border-box; padding: 0.7em 0.8em; border: 0; background: none;
                 font: inherit; font-weight: 700; color: var(--text); text-decoration: none; border-radius: 10px; cursor: pointer; text-align: left; }
         .menu a:active, .menu button:active { background: var(--card); }
@@ -336,6 +340,7 @@
 
         // Four times a second: highlight the line being sung and glide it to the middle (or drift the text up).
         function lyricsTick() {
+            if (KIOSK && screenOff) return;                      // blacked out: nobody sees it
             const box = panel.querySelector('.lyrics'), track = box && box.querySelector('.track');
             if (!track) return;
             const pos = lyricsPos() + (lyr.data?.offset || 0);   // the song's timing correction (set on the hub)
@@ -373,9 +378,13 @@
         const panel = document.getElementById('panel');
 
         let pageVersion = null;
+        // One question at a time, and never one that hangs: if the app stalls, questions mustn't pile up in the browser
+        let updating = false;
         async function update() {
+            if (updating) return;
+            updating = true;
             try {
-                data = await (await fetch('/api/dashboard')).json();
+                data = await (await fetch('/api/dashboard', { signal: AbortSignal.timeout(8000) })).json();
                 // After an update the page reloads itself (the Pi's own screen never would)
                 if (data.version) {
                     if (pageVersion && data.version !== pageVersion) { location.reload(); return; }
@@ -399,7 +408,7 @@
                 }
                 document.getElementById('settings-pill').classList.toggle('has-update', !!data.update_available);
                 if (data.screen) screenOff = !data.screen.on && Date.now() - wokeAt > 4000;
-                if (KIOSK) document.getElementById('blackout').classList.toggle('on', screenOff);
+                if (KIOSK) setBlackout(screenOff);
                 // The hub's Spins pages (on the hub's own address; "here" = this Pi is the hub)
                 const spinsPill = document.getElementById('spins-pill');
                 // With a hub, Spins (every room and source) replaces this display's own microphone History
@@ -413,10 +422,12 @@
                 tick();
                 updateMenu();
             } catch (e) { console.error(e); }
+            finally { updating = false; }
         }
 
         // Elapsed time moves every second between updates
         function tick() {
+            if (KIOSK && screenOff) return;
             if (!clock.dur) return;
             const pos = Math.min(clock.dur, clock.pos + (clock.running ? (performance.now() - clock.at) / 1000 : 0));
             const bar = panel.querySelector('.bar span');
@@ -474,9 +485,13 @@
         // On the Pi's own screen, the tap that wakes the screen only wakes it: it doesn't open the player or a menu.
         let screenOff = false, wokeAt = 0;
         const KIOSK = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+        function setBlackout(on) {
+            document.getElementById('blackout').classList.toggle('on', on);
+            document.documentElement.classList.toggle('screen-off', on);
+        }
         const swallowWakingTap = e => {
             if (!KIOSK) return;
-            if (screenOff) { screenOff = false; wokeAt = Date.now(); document.getElementById('blackout').classList.remove('on'); }
+            if (screenOff) { screenOff = false; wokeAt = Date.now(); setBlackout(false); }
             if (Date.now() - wokeAt < 1200) { e.preventDefault(); e.stopPropagation(); }
         };
         for (const t of ['pointerdown', 'pointerup', 'click']) document.addEventListener(t, swallowWakingTap, true);

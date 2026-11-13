@@ -95,3 +95,27 @@ def test_script_check_and_install(tmp_path):
     st, calls = run_script(tmp_path / "x", "install", ["chromium"], {"reboot": True})
     assert "full-upgrade" in calls and st["state"] == "done"
     assert "systemctl reboot" not in calls        # nothing on this machine says a restart is needed
+
+
+def test_power_status_reads_flags_and_last_event(tmp_path):
+    # Nothing wrong, and no problem logged yet
+    pw = sysupdates.power_status(str(tmp_path), value=0)
+    assert pw["available"] and pw["now"] == [] and pw["since_boot"] == [] and pw["last_event"] is None
+    # Under-voltage now (bit 0) and since start (bit 16), throttled since start (bit 18)
+    pw = sysupdates.power_status(str(tmp_path), value=0x50001)
+    assert pw["value"] == "0x50001"
+    assert pw["now"] == ["under-voltage"] and pw["since_boot"] == ["under-voltage", "throttled"]
+    # The log deploy/power-check.sh writes survives a restart: the last line is shown
+    (tmp_path / "power-events.log").write_text("1700000000 0x50000 under-voltage since start\n"
+                                               "1700000600 0x80008 hot now, hot since start\n")
+    pw = sysupdates.power_status(str(tmp_path), value=0)
+    assert pw["last_event"] == {"at": 1700000600.0, "value": "0x80008", "what": "hot now, hot since start"}
+
+
+def test_power_check_script_parses():
+    import shutil
+
+    import pytest
+    if not shutil.which("bash"):
+        pytest.skip("needs bash")
+    subprocess.run(["bash", "-n", str(REPO / "deploy" / "power-check.sh")], check=True)

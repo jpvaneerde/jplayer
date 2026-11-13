@@ -29,10 +29,18 @@
     else if (st.updates) { badge = `${st.updates} update${st.updates === 1 ? '' : 's'}`; tone = 'new'; }
     else if (st.reboot_needed) { badge = 'restart needed'; tone = 'new'; line = 'An update is finished once the Pi restarts.'; }
     const busy = away || st.in_progress;
+    // Power and heat: too little power (supply or cable) is the most common reason a Pi crashes
+    const pw = st.power || {};
+    let power = '';
+    if (pw.now?.length) power = `<div class="sys-muted sys-warn">⚠ Now: ${esc(pw.now.join(', '))}. Too little power makes a Pi crash: try another power supply or cable.</div>`;
+    else if (pw.since_boot?.length) power = `<div class="sys-muted sys-warn">⚠ Since the Pi started: ${esc(pw.since_boot.join(', '))}. Too little power makes a Pi crash: try another power supply or cable.</div>`;
+    else if (pw.last_event) power = `<div class="sys-muted">Power: fine now. Last problem ${esc(ago(pw.last_event.at))}: ${esc(pw.last_event.what)}</div>`;
+    else if (pw.available) power = '<div class="sys-muted">Power and temperature: fine</div>';
     card.innerHTML = `
       <h3 style="margin-top:0">System (Raspberry Pi OS)</h3>
       <div class="sys-line"><b>${esc(st.os || 'Raspberry Pi OS')}</b><span class="sys-badge ${tone}">${esc(badge)}</span></div>
       <div class="sys-muted">${esc(line)}</div>
+      ${power}
       ${st.updates && !busy ? `<div class="sys-muted">Waiting: ${esc(st.packages.slice(0, 12).join(', '))}${st.packages.length > 12 ? '…' : ''}</div>` : ''}
       ${st.supported ? `<div class="sys-buttons">
         ${st.updates && !busy ? '<button type="button" class="sys-btn primary" data-act="install">Install updates</button>' : ''}

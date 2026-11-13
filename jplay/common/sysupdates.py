@@ -52,6 +52,46 @@ def reboot_needed_now() -> bool:
     return False
 
 
+THROTTLED_FILE = "/sys/devices/platform/soc/soc:firmware/get_throttled"
+POWER_NOW = {0x1: "under-voltage", 0x2: "speed capped", 0x4: "throttled", 0x8: "hot"}
+POWER_SINCE_BOOT = {0x10000: "under-voltage", 0x20000: "speed capped", 0x40000: "throttled", 0x80000: "hot"}
+
+
+def read_throttled() -> int | None:
+    """The firmware's power and temperature flags (vcgencmd get_throttled), or None when this isn't a Pi."""
+    try:
+        with open(THROTTLED_FILE) as f:
+            return int(f.read().strip(), 16)
+    except (OSError, ValueError):
+        pass
+    try:
+        out = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True, text=True, timeout=3).stdout
+        return int(out.strip().split("=", 1)[1], 16)
+    except Exception:
+        return None
+
+
+def power_status(state_dir: str, value: int | None = None) -> dict:
+    """Too little power or too hot, now and since the Pi started; and the last time deploy/power-check.sh saw
+    a problem (that log survives restarts, so it tells why a Pi went down)."""
+    value = read_throttled() if value is None else value
+    last = None
+    try:
+        with open(os.path.join(state_dir, "power-events.log")) as f:
+            lines = [ln.split(" ", 2) for ln in f.read().splitlines() if ln.strip()]
+        if lines and len(lines[-1]) == 3:
+            last = {"at": float(lines[-1][0]), "value": lines[-1][1], "what": lines[-1][2]}
+    except (OSError, ValueError):
+        pass
+    return {
+        "available": value is not None,
+        "value": f"0x{value:x}" if value is not None else None,
+        "now": [w for b, w in POWER_NOW.items() if value and value & b],
+        "since_boot": [w for b, w in POWER_SINCE_BOOT.items() if value and value & b],
+        "last_event": last,
+    }
+
+
 class SystemUpdates:
     def __init__(self, state_dir: str):
         self.state_dir = state_dir
@@ -103,6 +143,7 @@ class SystemUpdates:
             "message": s.get("message") or "",
             "finished_at": s.get("finished_at"),
             "log": (s.get("log") or [])[-12:],
+            "power": power_status(self.state_dir),
         }
 
     # ------------------------------------------------------------ asking for work
