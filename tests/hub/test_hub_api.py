@@ -57,7 +57,7 @@ def test_lyrics_are_looked_up_once_and_kept(client, monkeypatch):
     assert client.put("/api/lyrics/song", params={"key": key}, json={"offset": 1.5}).json()["offset"] == 1.5
     assert client.get("/api/lyrics", params=q).json()["offset"] == 1.5
     songs = client.get("/api/lyrics/songs").json()
-    assert songs["stats"] == {"songs": 1, "found": 1, "synced": 1} and songs["songs"][0]["asked_count"] == 3
+    assert songs["stats"] == {"songs": 1, "found": 1, "synced": 1, "files": 0} and songs["songs"][0]["asked_count"] == 3
 
 
 def test_lyrics_unavailable_is_not_stored(client, monkeypatch):

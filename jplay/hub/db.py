@@ -114,15 +114,34 @@ CREATE TABLE IF NOT EXISTS lyrics (
   duration      REAL,                          -- seconds, when known
   found         INTEGER NOT NULL DEFAULT 0,
   instrumental  INTEGER NOT NULL DEFAULT 0,
-  synced        TEXT,                          -- JSON [[seconds, line], ...]
+  synced        TEXT,                          -- JSON [[seconds, line(, [[seconds, word], ...])], ...]
   plain         TEXT,                          -- JSON [line, ...]
   offset        REAL NOT NULL DEFAULT 0,       -- timing correction for this song (seconds)
-  source        TEXT NOT NULL DEFAULT 'lrclib',-- lrclib | manual (manual entries are never overwritten)
+  source        TEXT NOT NULL DEFAULT 'lrclib',-- lrclib | file (an .lrc on the music share) | manual (never overwritten)
   lrclib_id     INTEGER,
   fetched_at    INTEGER NOT NULL,              -- when LRCLIB was last asked (ms)
   asked_count   INTEGER NOT NULL DEFAULT 0,
-  last_asked_at INTEGER
+  last_asked_at INTEGER,
+  file_path     TEXT,                          -- source 'file': which .lrc on the share, and its time
+  file_mtime    INTEGER
 );
+
+-- .lrc files found on the music share (lyrics_share.py); the newest one for a song is what the displays get.
+CREATE TABLE IF NOT EXISTS lyric_files (
+  path        TEXT PRIMARY KEY,                -- from the share's folder: "ABBA/Arrival/02 - Dancing Queen.lrc"
+  mtime       INTEGER NOT NULL,                -- when the file last changed (ms)
+  size        INTEGER NOT NULL,
+  key         TEXT,                            -- the song (lrclib.cache_key); NULL: couldn't tell which song
+  artist      TEXT NOT NULL DEFAULT '',
+  title       TEXT NOT NULL DEFAULT '',
+  album       TEXT NOT NULL DEFAULT '',
+  duration    REAL,
+  synced      TEXT,
+  plain       TEXT,
+  error       TEXT,                            -- why it couldn't be used
+  scanned_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS lyric_files_key ON lyric_files (key, mtime);
 """
 
 
@@ -144,6 +163,10 @@ def init(path: str) -> None:
         cols = {r[1] for r in _conn.execute("PRAGMA table_info(plays)")}
         if "synced_hash" not in cols:
             _conn.execute("ALTER TABLE plays ADD COLUMN synced_hash TEXT")
+        cols = {r[1] for r in _conn.execute("PRAGMA table_info(lyrics)")}
+        for col, kind in (("file_path", "TEXT"), ("file_mtime", "INTEGER")):
+            if col not in cols:
+                _conn.execute(f"ALTER TABLE lyrics ADD COLUMN {col} {kind}")
 
 
 def close() -> None:

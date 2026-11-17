@@ -1,7 +1,7 @@
 """Song lyrics from LRCLIB (lrclib.net: free, no account), and the rules for picking the right entry.
 
 Used by the hub (the lyrics store for the whole house) and by a display when the hub can't be reached.
-An answer: {"found", "instrumental", "synced": [[seconds, line], ...] | None, "plain": [line, ...] | None,
+An answer: {"found", "instrumental", "synced": [[seconds, line(, words)], ...] | None, "plain": [line, ...] | None,
 "offset"}: offset (seconds) is the song's timing correction, added to the position before picking the line.
 """
 from __future__ import annotations
@@ -63,20 +63,59 @@ def cache_key(artist: str, title: str) -> str:
 
 # ---------------------------------------------------------------- LRC
 _TIME = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]")
+_WORD = re.compile(r"<(\d+):(\d+(?:\.\d+)?)>")
+
+
+def _secs(m: str, s: str) -> float:
+    return round(int(m) * 60 + float(s), 2)
+
+
+def _words(text: str, start: float) -> tuple[list | None, str]:
+    """A line with word times ('<00:01.00>Hi <00:01.50>there', enhanced LRC) -> ([[1.0, 'Hi '], [1.5, 'there']],
+    'Hi there'). Text before the first word time starts with the line. (None, line) when it has no word times."""
+    parts = _WORD.split(text)                # [before, m, s, text, m, s, text, ...]
+    if len(parts) == 1:
+        return None, text.strip()
+    words: list[list] = [[start, parts[0]]] if parts[0].strip() else []
+    for i in range(1, len(parts), 3):
+        seg = parts[i + 2]
+        if seg.strip():
+            words.append([_secs(parts[i], parts[i + 1]), seg])
+        elif words and seg:                  # only a space between two times: keep it with the word before
+            words[-1][1] += seg
+    if not words:
+        return None, ""
+    words[0][1] = words[0][1].lstrip()
+    words[-1][1] = words[-1][1].rstrip()
+    return words, "".join(w for _, w in words)
 
 
 def parse_lrc(text: str) -> list[list]:
-    """'[01:02.50] Line' (a line may carry several times) -> [[62.5, 'Line'], ...], in time order."""
+    """'[01:02.50] Line' (a line may carry several times) -> [[62.5, 'Line'], ...], in time order.
+
+    A line with word times (enhanced LRC, '[00:01.00]<00:01.00>Hi <00:01.50>there') also gets them:
+    [1.0, 'Hi there', [[1.0, 'Hi '], [1.5, 'there']]] (each word with its own spacing, so joined they make the line).
+    """
     out = []
     for raw in (text or "").splitlines():
         times = _TIME.findall(raw)
         if not times:
             continue                                     # [ar:...], [length:...] and other tags
-        line = _TIME.sub("", raw).strip()
+        rest = _TIME.sub("", raw)
         for m, s in times:
-            out.append([round(int(m) * 60 + float(s), 2), line])
+            t = _secs(m, s)
+            words, line = _words(rest, t)
+            out.append([t, line, words] if words else [t, line])
     out.sort(key=lambda x: x[0])
     return out
+
+
+def lrc_tags(text: str) -> dict:
+    """The LRC header tags: '[ar:ABBA]' -> {"ar": "ABBA"} (ar, ti, al, length...)."""
+    tags = {}
+    for m in re.finditer(r"^\s*\[([a-z]{2,8}):([^\]]*)\]\s*$", text or "", re.M | re.I):
+        tags.setdefault(m.group(1).lower(), m.group(2).strip())
+    return tags
 
 
 def _answer(rec: dict) -> dict:
@@ -84,7 +123,7 @@ def _answer(rec: dict) -> dict:
     synced = parse_lrc(rec.get("syncedLyrics") or "") or None
     plain = [line.rstrip() for line in (rec.get("plainLyrics") or "").strip().splitlines()] or None
     if plain is None and synced:
-        plain = [line for _, line in synced]
+        plain = [e[1] for e in synced]
     return {"found": bool(synced or plain), "instrumental": bool(rec.get("instrumental")),
             "synced": synced, "plain": plain, "offset": 0, "lrclib_id": rec.get("id")}
 

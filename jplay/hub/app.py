@@ -25,7 +25,7 @@ from ..common import no_stale_pages, system
 from ..common.announce import HUB_TYPE, Announcer
 from ..common import imgproxy, sysupdates
 from ..common.updates import UpdateError
-from . import collection, db, devices, https, importer, lyrics, records, records_sync, spins
+from . import collection, db, devices, https, importer, lyrics, lyrics_share, records, records_sync, spins
 
 log = logging.getLogger(__name__)
 WEB_DIR = system.WEB_DIR / "hub"
@@ -60,6 +60,20 @@ class PlayFix(BaseModel):
 class LyricsFix(BaseModel):
     offset: float | None = None
     text: str | None = None
+
+
+class ShareBody(BaseModel):
+    address: str = Field("", max_length=300)
+    username: str = Field("", max_length=120)
+    password: str | None = Field(None, max_length=200)   # None/empty: keep the saved password
+    every: int = Field(15, ge=5, le=1440)               # minutes between looks
+    on: bool = True
+
+
+class ShareTestBody(BaseModel):
+    address: str = Field("", max_length=300)
+    username: str = Field("", max_length=120)
+    password: str | None = Field(None, max_length=200)   # None/empty: the saved password
 
 
 class RecordsBody(BaseModel):
@@ -141,6 +155,18 @@ async def _worker() -> None:
         await asyncio.sleep(PROCESS_EVERY)
 
 
+async def _lyrics_share() -> None:
+    """Look through the music share for new and changed .lrc files every few minutes (lyrics_share.py)."""
+    await asyncio.sleep(30)
+    while True:
+        try:
+            if lyrics_share.due():
+                await asyncio.to_thread(lyrics_share.scan)
+        except Exception:
+            log.exception("Lyrics share")
+        await asyncio.sleep(30)
+
+
 async def _auto_update(app: FastAPI) -> None:
     """On a Pi that is only a hub: install a waiting update at night when that's switched on."""
     while True:
@@ -169,7 +195,8 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
         db.init(str(data_dir / "hub.db"))
         lyrics.init()
         app.state.http = httpx.AsyncClient()
-        tasks = [asyncio.create_task(_worker(), name="spins"), asyncio.create_task(_auto_update(app), name="update")]
+        tasks = [asyncio.create_task(_worker(), name="spins"), asyncio.create_task(_auto_update(app), name="update"),
+                 asyncio.create_task(_lyrics_share(), name="lyrics-share")]
         announcer = Announcer(_name(), port, {"id": records_sync.hub_key(), "version": app_version(), "path": "/api"},
                               HUB_TYPE) if announce else None
         if announcer:
@@ -432,6 +459,33 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
     async def lyrics_forget(key: str) -> dict:
         await t(lyrics.forget, key)
         return {"ok": True}
+
+    # ------------------------------------------------------------ lyrics from the music share (lyrics_share.py)
+    @app.get("/api/lyrics/share")
+    async def share_view() -> dict:
+        return await t(lyrics_share.view)
+
+    @app.put("/api/lyrics/share")
+    async def share_save(body: ShareBody) -> dict:
+        try:
+            return await t(lyrics_share.save, body.address, body.username, body.password or None, body.every, body.on)
+        except lyrics_share.ShareError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/lyrics/share/test")
+    async def share_test(body: ShareTestBody) -> dict:
+        try:
+            lyrics_share.parse_address(body.address)
+        except lyrics_share.ShareError as e:
+            return {"ok": False, "message": str(e)}
+        return await t(lyrics_share.test, {"address": body.address, "username": body.username,
+                                           "password": body.password or None})
+
+    @app.post("/api/lyrics/share/scan")
+    async def share_scan(full: bool = False) -> dict:
+        if not lyrics_share.config()["address"]:
+            raise HTTPException(400, "Set up the share first")
+        return {"started": lyrics_share.scan_in_background(full)}
 
     # ------------------------------------------------------------ settings
     @app.get("/api/settings")

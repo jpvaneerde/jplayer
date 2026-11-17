@@ -126,6 +126,14 @@ an outbox (two weeks) and use their own copy of the lyrics or ask LRCLIB themsel
   when they disagree. Correct a play with ⋯ (not my record, it was a record/CD, this copy, delete).
 - **Lyrics** (`/lyrics`): every song a display asked for. Shift a song's timing (on every display at once), paste
   lyrics by hand (LRC with times, or plain text: never overwritten), or look a song up again.
+- **Lyrics from your music share** (Settings): give the hub your share (`\\synology\music`, a user that may read
+  it) and it looks there every few minutes for `.lrc` files next to your songs (`02 - Song.flac` + `02 - Song.lrc`, as
+  LyricSync makes them). They win over LRCLIB; a changed file replaces the lyrics (and its timing correction starts
+  over), with several files for one song the newest wins, and a removed file sends the song back to LRCLIB. Lyrics
+  pasted by hand still win over everything. Which song a file is: the tags of the audio file next to it, else the
+  file's `[ar:]`/`[ti:]`, else the folders (Artist/Album/NN - Title). Nothing is mounted on the Pi: the hub reads the
+  share over SMB itself. Files with a time per word (`[00:12.00]<00:12.00>Hello <00:12.40>world`) light up word by
+  word on the displays.
 - **Settings** (`/settings`): rooms (priority, what plays there), the displays that report, JPlay Records, import,
   and updates.
 

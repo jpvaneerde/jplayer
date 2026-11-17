@@ -112,6 +112,35 @@
     </details>
   </div>
 
+  <h2>Lyrics from your music share</h2>
+  <div class="card" id="ls-card">
+    <p class="muted small" style="margin-top: 0;">The hub looks through your music share for <code>.lrc</code> files next to
+      your songs (<code>02 - Song.flac</code> + <code>02 - Song.lrc</code>, as LyricSync makes them) and gives them to every
+      display, ahead of LRCLIB. A changed file replaces the lyrics; with several files for one song the newest wins; a removed
+      file sends the song back to LRCLIB. Lyrics pasted by hand on the Lyrics page always stay. Files with a time per word
+      light up word by word on the displays.</p>
+    <label for="ls-address">Share</label>
+    <input id="ls-address" placeholder="\\synology\music (a folder in it is fine too)" style="width: 100%;">
+    <div class="row">
+      <div class="grow"><label for="ls-user">User</label><input id="ls-user" autocomplete="off" style="width: 100%;"></div>
+      <div class="grow"><label for="ls-pass">Password</label><input id="ls-pass" type="password" autocomplete="new-password" style="width: 100%;"></div>
+    </div>
+    <div class="muted small">A user on the NAS that may only read the music is enough.</div>
+    <div class="row" style="margin-top: 10px;">
+      <span class="muted small">Look for new and changed files every</span>
+      <input id="ls-every" type="number" min="5" max="1440" style="width: 5em;"><span class="muted small">minutes</span>
+      <label class="check"><input type="checkbox" id="ls-on"> On</label>
+    </div>
+    <div class="row" style="margin-top: 12px;">
+      <button id="ls-save">Save</button>
+      <button id="ls-test">Test</button>
+      <button class="primary" id="ls-scan">Scan now</button>
+      <button id="ls-full" title="Read every file again, not only new and changed ones">Read all again</button>
+      <span id="ls-result" class="small"></span>
+    </div>
+    <div id="ls-status" class="small" style="margin-top: 12px;"></div>
+  </div>
+
   <h2>Your collection as a Shazam</h2>
   <div class="card" id="col-card">
     <p class="muted small" style="margin-top: 0;">Jplayazam, the fingerprint service in Kubernetes: it knows your FLAC
@@ -361,7 +390,59 @@ $('col-rebuild').addEventListener('click', async () => {
   try { await api('/api/collection/rebuild', { method: 'POST' }); toast('Starting over'); setTimeout(loadCollection, 1500); } catch (e) { toast(e.message); }
 });
 
-loadRooms(); loadRecords(); importStatus(); loadUpdate(); loadHttps(); loadCollection();
+
+// ---- lyrics from the music share
+let lsTimer = null;
+async function loadShare() {
+  clearTimeout(lsTimer);
+  let v;
+  try { v = await api('/api/lyrics/share'); } catch (e) { $('ls-status').textContent = e.message; return; }
+  if (!document.activeElement?.id?.startsWith('ls-')) {
+    $('ls-address').value = v.address; $('ls-user').value = v.username; $('ls-every').value = v.every; $('ls-on').checked = v.on;
+  }
+  $('ls-pass').placeholder = v.password_set ? 'Saved (leave empty to keep it)' : '';
+  const st = v.status, busy = st.state === 'scanning';
+  const when = (ms) => ms ? new Date(ms).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : '';
+  const lines = [];
+  if (!v.address) lines.push('<span class="muted">Not set up.</span>');
+  else {
+    if (busy) lines.push(`Working: ${esc(st.message)}${st.progress ? ` · ${st.progress} .lrc files found so far` : ''}`);
+    else if (st.state === 'failed') lines.push(`<span class="err">${esc(st.message)}</span>`);
+    else if (st.state === 'partly') lines.push(`<span class="err">${esc(st.message)}</span>`);
+    lines.push(`<b>${v.songs}</b> songs get their lyrics from the share (${v.files} .lrc files${v.word_timed ? `, ${v.word_timed} with a time per word` : ''})`);
+    const l = st.last || {};
+    if (st.finished_at && !busy) lines.push(`<span class="muted">Last look ${when(st.finished_at)}: ${l.new || 0} new, ${l.changed || 0} changed, ${l.gone || 0} removed${v.next_scan_in != null ? ` · next in ${Math.ceil(v.next_scan_in / 60)} min` : ''}</span>`);
+    else if (!busy && v.on) lines.push('<span class="muted">First look within a minute.</span>');
+    if (!v.on) lines.push('<span class="muted">Switched off: the lyrics found so far stay.</span>');
+    if (v.problems) lines.push(`<details><summary class="muted">${v.problems} files couldn't be used</summary><div class="muted">${v.problem_files.map((p) => `${esc(p.path)}: ${esc(p.error)}`).join('<br>')}</div></details>`);
+  }
+  $('ls-status').innerHTML = lines.join('<br>');
+  $('ls-scan').disabled = $('ls-full').disabled = busy;
+  lsTimer = setTimeout(loadShare, busy ? 2000 : 30000);
+}
+const shareBody = () => ({ address: $('ls-address').value.trim(), username: $('ls-user').value.trim(),
+  password: $('ls-pass').value || null, every: Number($('ls-every').value) || 15, on: $('ls-on').checked });
+async function saveShare() { await api('/api/lyrics/share', { method: 'PUT', body: shareBody() }); $('ls-pass').value = ''; }
+$('ls-save').addEventListener('click', async () => { try { await saveShare(); toast('Saved'); loadShare(); } catch (e) { toast(e.message); } });
+$('ls-test').addEventListener('click', async () => {
+  $('ls-result').textContent = 'Connecting…';
+  try {
+    const r = await api('/api/lyrics/share/test', { method: 'POST', body: shareBody() });
+    $('ls-result').innerHTML = r.ok ? `<span class="ok">${esc(r.message)}</span>` : `<span class="err">${esc(r.message)}</span>`;
+  } catch (e) { $('ls-result').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+});
+for (const [id, full] of [['ls-scan', false], ['ls-full', true]]) {
+  $(id).addEventListener('click', async () => {
+    try {
+      await saveShare();
+      const r = await api('/api/lyrics/share/scan' + (full ? '?full=true' : ''), { method: 'POST' });
+      toast(r.started ? 'Looking through the share' : 'Already looking');
+      setTimeout(loadShare, 800);
+    } catch (e) { toast(e.message); }
+  });
+}
+
+loadRooms(); loadRecords(); importStatus(); loadUpdate(); loadHttps(); loadCollection(); loadShare();
 </script>
 </body>
 </html>

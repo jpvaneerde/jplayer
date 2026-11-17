@@ -134,6 +134,10 @@
         .lyrics p:empty::before { content: "♪"; }
         .lyrics p.now { color: var(--text); opacity: 1; transform: scale(1.06); }
         .lyrics p.near { opacity: 0.8; }
+        /* A time per word (from an .lrc with word times): the line being sung fills in word by word */
+        .lyrics p.now.words .w { opacity: 0.38; transition: opacity 0.15s, color 0.15s; }
+        .lyrics p.now.words .w.sung { opacity: 1; }
+        .lyrics p.now.words .w.cur { color: var(--src, var(--text)); }
         /* No times: the whole text, readable, drifting up slowly through the song */
         .lyrics.plain .track { transition: transform 1s linear; }
         .lyrics.plain p { color: var(--text); opacity: 0.85; font-size: 1.05em; font-weight: 650; }
@@ -335,8 +339,32 @@
         }
 
         function lyricsHtml(l) {
-            return `<div class="lyrics ${l.mode}"><div class="track">${l.lines.map(([, line]) => `<p>${esc(line)}</p>`).join('')}</div></div>`;
+            const p = ([, line, words]) => words && words.length
+                ? `<p class="words">${words.map(([, w]) => `<span class="w">${esc(w)}</span>`).join('')}</p>` : `<p>${esc(line)}</p>`;
+            return `<div class="lyrics ${l.mode}"><div class="track">${l.lines.map(p).join('')}</div></div>`;
         }
+
+        // Every frame while a line with word times is being sung: light its words up as they come.
+        let wordsLine = null, wordsDone = -1;
+        function wordsTick() {
+            requestAnimationFrame(wordsTick);
+            const p = panel && panel.querySelector('.lyrics.synced p.now.words');
+            if (!p || !lyr.data || !lyr.data.synced) { wordsLine = null; return; }
+            const idx = Array.prototype.indexOf.call(p.parentNode.children, p);
+            const words = (lyr.data.synced[idx] || [])[2];
+            if (!words) return;
+            const pos = lyricsPos() + (lyr.data.offset || 0) + 0.05;
+            let n = 0;
+            while (n < words.length && words[n][0] <= pos) n++;
+            if (p === wordsLine && n === wordsDone) return;
+            wordsLine = p; wordsDone = n;
+            const spans = p.children;
+            for (let j = 0; j < spans.length; j++) {
+                spans[j].classList.toggle('sung', j < n);
+                spans[j].classList.toggle('cur', j === n - 1);
+            }
+        }
+        requestAnimationFrame(wordsTick);
 
         // Four times a second: highlight the line being sung and glide it to the middle (or drift the text up).
         function lyricsTick() {

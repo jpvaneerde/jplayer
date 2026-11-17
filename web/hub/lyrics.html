@@ -22,6 +22,7 @@
       <button data-only="missing">Not found</button>
       <button data-only="plain">Without timing</button>
       <button data-only="corrected">Corrected</button>
+      <button data-only="file">From your files</button>
     </div>
     <div class="grow"></div>
     <input id="q" type="search" placeholder="Search" style="width: 170px;">
@@ -41,7 +42,7 @@
     </div>
     <label>Lyrics</label>
     <div class="lyrics-lines card" id="ed-lines"></div>
-    <label>Paste lyrics (LRC with times like <code>[01:02.50] line</code>, or plain text)</label>
+    <label>Paste lyrics (LRC with times like <code>[01:02.50] line</code>, word times like <code>&lt;01:02.80&gt;word</code> too, or plain text)</label>
     <textarea id="ed-text" placeholder="[00:12.30] First line&#10;[00:15.80] Second line"></textarea>
     <div class="row" style="margin-top: 10px;">
       <button class="primary" id="ed-save">Save lyrics</button>
@@ -61,13 +62,14 @@ async function load(append = false) {
   st.total = data.total;
   const s = data.stats;
   $('summary').textContent = `${s.songs} songs asked for by the displays: ${s.found} with lyrics, ${s.synced} of them in time with the music. ` +
+    (s.files ? `${s.files} come from .lrc files on your music share (Settings). ` : '') +
     'A song is looked up on LRCLIB once, the first time it plays; a song without lyrics is tried again after three days.';
   $('songs').innerHTML = st.songs.map((x) => `<div class="item" data-key="${esc(x.key)}" style="cursor: pointer;">
       <div class="grow"><div class="title ellipsis">${esc(x.title)}</div><div class="muted ellipsis">${esc(x.artist)}${x.album ? ' · ' + esc(x.album) : ''}</div></div>
       <div class="small" style="text-align: right;">
-        ${x.found ? (x.synced ? '<span class="ok">in time</span>' : '<span>text only</span>') : x.instrumental ? '<span class="muted">instrumental</span>' : '<span class="err">not found</span>'}
-        ${x.offset ? `<br><span class="muted">${x.offset > 0 ? '+' : ''}${x.offset} s</span>` : ''}${x.source === 'manual' ? '<br><span class="muted">by hand</span>' : ''}
-        <br><span class="muted">${x.asked_count}× · ${x.last_asked_at ? ago(x.last_asked_at) : ''}</span></div></div>`).join('')
+        ${x.found ? (x.synced ? `<span class="ok">${x.words ? 'word by word' : 'in time'}</span>` : '<span>text only</span>') : x.instrumental ? '<span class="muted">instrumental</span>' : '<span class="err">not found</span>'}
+        ${x.offset ? `<br><span class="muted">${x.offset > 0 ? '+' : ''}${x.offset} s</span>` : ''}${x.source === 'manual' ? '<br><span class="muted">by hand</span>' : x.source === 'file' ? '<br><span class="muted">from your files</span>' : ''}
+        ${x.asked_count ? `<br><span class="muted">${x.asked_count}× · ${x.last_asked_at ? ago(x.last_asked_at) : ''}</span>` : ''}</div></div>`).join('')
     || '<div class="muted" style="padding: 10px 0;">Nothing here.</div>';
   $('more').hidden = st.songs.length >= st.total;
 }
@@ -83,12 +85,14 @@ async function open(key) {
 function show() {
   const s = st.song;
   $('ed-title').textContent = s.title;
-  $('ed-artist').textContent = s.artist + (s.album ? ' · ' + s.album : '');
+  $('ed-artist').textContent = s.artist + (s.album ? ' · ' + s.album : '') + (s.source === 'file' ? ` · from ${s.file_path}` : '');
   $('ed-offset').textContent = `${s.offset > 0 ? '+' : ''}${s.offset} s`;
   const fmt = (t) => `${String(Math.floor(t / 60)).padStart(2, '0')}:${(t % 60).toFixed(2).padStart(5, '0')}`;
   $('ed-lines').innerHTML = s.synced ? s.synced.map(([t, l]) => `<div><span>${fmt(t)}</span>${esc(l)}</div>`).join('')
     : s.plain ? s.plain.map((l) => `<div>${esc(l) || '&nbsp;'}</div>`).join('') : '<div class="muted">No lyrics.</div>';
-  $('ed-text').value = s.synced ? s.synced.map(([t, l]) => `[${fmt(t)}] ${l}`).join('\n') : (s.plain || []).join('\n');
+  // Word times stay when lyrics are edited and saved again (<01:02.50>word)
+  $('ed-text').value = s.synced ? s.synced.map(([t, l, w]) => `[${fmt(t)}]${w ? w.map(([wt, x]) => `<${fmt(wt)}>${x}`).join('') : ' ' + l}`).join('\n')
+    : (s.plain || []).join('\n');
 }
 
 $('songs').addEventListener('click', (e) => { const it = e.target.closest('[data-key]'); if (it) open(it.dataset.key); });
