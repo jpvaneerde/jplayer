@@ -66,7 +66,7 @@ class ShareBody(BaseModel):
     address: str = Field("", max_length=300)
     username: str = Field("", max_length=120)
     password: str | None = Field(None, max_length=200)   # None/empty: keep the saved password
-    every: int = Field(15, ge=5, le=1440)               # minutes between looks
+    at: str = Field("03:00", max_length=5)              # time of day of the daily look (HH:MM)
     on: bool = True
 
 
@@ -156,7 +156,7 @@ async def _worker() -> None:
 
 
 async def _lyrics_share() -> None:
-    """Look through the music share for new and changed .lrc files every few minutes (lyrics_share.py)."""
+    """Look through the music share for new and changed .lrc files once a day (lyrics_share.py)."""
     await asyncio.sleep(30)
     while True:
         try:
@@ -468,7 +468,7 @@ def create_app(data_dir: Path | None = None, port: int = PORT, announce: bool = 
     @app.put("/api/lyrics/share")
     async def share_save(body: ShareBody) -> dict:
         try:
-            return await t(lyrics_share.save, body.address, body.username, body.password or None, body.every, body.on)
+            return await t(lyrics_share.save, body.address, body.username, body.password or None, body.at, body.on)
         except lyrics_share.ShareError as e:
             raise HTTPException(400, str(e))
 

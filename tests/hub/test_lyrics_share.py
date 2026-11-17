@@ -23,6 +23,7 @@ class FakeShare:
         self.files: dict[str, tuple[bytes, float]] = {}
         self.broken: set[str] = set()          # folders that fail to list
         self.sessions: list = []
+        self.fail_logon = False                # the NAS is off / unreachable
 
     def put(self, path: str, data: bytes | str, mtime: float | None = None):
         self.files[path] = (data.encode() if isinstance(data, str) else data, mtime or time.time())
@@ -32,6 +33,8 @@ class FakeShare:
 
     # --- smbclient API
     def register_session(self, server, username=None, password=None, connection_timeout=60):
+        if self.fail_logon:
+            raise Exception("connection timed out")
         if password == "wrong":
             raise Exception("STATUS_LOGON_FAILURE")
         self.sessions.append((server, username, password))
@@ -83,7 +86,7 @@ def client(tmp_path, monkeypatch, share):
     monkeypatch.setattr(hub_app, "PROCESS_EVERY", 3600)
     monkeypatch.setattr(lyrics, "fetch", lambda *a, **k: (_ for _ in ()).throw(AssertionError("LRCLIB asked")))
     with TestClient(hub_app.create_app(tmp_path, announce=False)) as c:
-        c.put("/api/lyrics/share", json={"address": "\\\\nas\\music", "username": "jp", "password": "pw", "every": 15})
+        c.put("/api/lyrics/share", json={"address": "\\\\nas\\music", "username": "jp", "password": "pw", "at": "03:00"})
         yield c
 
 
@@ -183,7 +186,7 @@ def test_a_folder_that_cant_be_read_doesnt_remove_lyrics(client, share):
 
 def test_settings_test_and_another_share(client, share):
     v = client.get("/api/lyrics/share").json()
-    assert v["address"] == "\\\\nas\\music" and v["password_set"] and v["every"] == 15
+    assert v["address"] == "\\\\nas\\music" and v["password_set"] and v["at"] == "03:00"
     assert share.sessions == [] or share.sessions[-1][2] == "pw"
     share.put("ABBA/Arrival/02 - Dancing Queen.lrc", LRC)
     r = client.post("/api/lyrics/share/test", json={"address": "//nas/music", "username": "jp"}).json()
@@ -206,3 +209,34 @@ def test_parse_address():
     assert lyrics_share.parse_address("smb://192.168.1.5/music/") == ("192.168.1.5", "music", "")
     with pytest.raises(lyrics_share.ShareError):
         lyrics_share.parse_address("synology")
+
+
+def test_the_look_is_once_a_day_at_the_set_time(client, monkeypatch):
+    from datetime import datetime
+    noon = datetime(2026, 11, 17, 12, 0).timestamp()
+    nxt = datetime.fromtimestamp(lyrics_share._next_at("03:00", noon))
+    assert (nxt.day, nxt.hour, nxt.minute) == (18, 3, 0)                 # already past today: tomorrow
+    nxt = datetime.fromtimestamp(lyrics_share._next_at("15:30", noon))
+    assert (nxt.day, nxt.hour, nxt.minute) == (17, 15, 30)
+    assert lyrics_share._valid_at("nonsense") == "03:00" and lyrics_share._valid_at("7:05") == "07:05"
+    v = client.put("/api/lyrics/share", json={"address": "\\\\nas\\music", "at": "04:15"}).json()
+    assert v["at"] == "04:15" and v["next_scan_at"] > datetime.now().timestamp() * 1000
+    assert not lyrics_share.due()                                        # nothing is due until that time
+    monkeypatch.setattr(lyrics_share, "_next_due", 0.0)
+    assert lyrics_share.due()
+
+
+def test_offline_since_is_shown_and_cleared(client, share):
+    share.put("ABBA/Arrival/02 - Dancing Queen.lrc", LRC, mtime=1000)
+    lyrics_share.scan()
+    assert client.get("/api/lyrics/share").json()["offline_since"] is None
+    share.fail_logon = True
+    lyrics_share.scan()
+    v = client.get("/api/lyrics/share").json()
+    assert v["offline_since"] and ask(client)["found"]                   # lyrics stay
+    first = v["offline_since"]
+    lyrics_share.scan()
+    assert client.get("/api/lyrics/share").json()["offline_since"] == first   # since the first failure
+    share.fail_logon = False
+    lyrics_share.scan()
+    assert client.get("/api/lyrics/share").json()["offline_since"] is None

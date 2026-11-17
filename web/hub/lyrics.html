@@ -16,6 +16,7 @@
 <main>
   <h2>Lyrics</h2>
   <p class="muted small" id="summary">…</p>
+  <p class="err small" id="offline" hidden></p>
   <div class="row" style="margin-bottom: 8px;">
     <div class="tabs" id="only">
       <button data-only="" class="on">All</button>
@@ -72,6 +73,18 @@ async function load(append = false) {
         ${x.asked_count ? `<br><span class="muted">${x.asked_count}× · ${x.last_asked_at ? ago(x.last_asked_at) : ''}</span>` : ''}</div></div>`).join('')
     || '<div class="muted" style="padding: 10px 0;">Nothing here.</div>';
   $('more').hidden = st.songs.length >= st.total;
+  if (!append) shareWarning();
+}
+
+async function shareWarning() {   // the music share can't be reached: the lyrics from it stay, but say so
+  try {
+    const v = await api('/api/lyrics/share');
+    const el = $('offline');
+    el.hidden = !v.offline_since;
+    if (v.offline_since) el.textContent = 'Music share offline since ' +
+      new Date(v.offline_since).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) +
+      ': the lyrics already taken from it stay as they are; new and changed .lrc files wait until it is back (Settings).';
+  } catch (e) { /* the warning is optional */ }
 }
 
 async function open(key) {

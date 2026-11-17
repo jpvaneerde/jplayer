@@ -3,7 +3,7 @@ songs (made by LyricSync, or anything else) and gives them to every display, ahe
 
 - Set up on the hub's Settings page: the share's address (\\\\synology\\music), a user and password (a read-only
   account is enough). Nothing is mounted on the Pi: the hub reads the share itself.
-- Every few minutes (and on "Scan now") it walks the share. Only files that are new or changed since the last look
+- Once a day at a set time (03:00 unless changed) and on "Scan now" it walks the share. Only files that are new or changed since the last look
   are read; the rest is a quick look at each file's time. A changed file replaces the lyrics; when one song has
   several .lrc files (an album and a compilation), the newest one wins; a removed file sends the song back to LRCLIB.
 - Which song a file belongs to: the tags of the audio file next to it (same name: "02 - Song.flac" for
@@ -19,6 +19,7 @@ import os
 import re
 import threading
 import time
+from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -32,13 +33,13 @@ AUDIO_EXTS = (".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".aiff", ".aif",
 SKIP_DIRS = {"@eadir", "#recycle", "#snapshot", ".snapshot", "@recycle", "$recycle.bin", "system volume information",
              "@tmp", ".appledouble", ".trash", ".trashes"}
 MAX_LRC_BYTES = 512 * 1024             # bigger than any real lyrics file: not read
-DEFAULT_EVERY = 15                     # minutes between looks
+DEFAULT_AT = "03:00"                  # the time of day (hub's local time) of the daily look
 CONNECT_TIMEOUT = 10
 
 _lock = threading.Lock()               # one scan at a time
 status: dict[str, Any] = {"state": "idle", "message": "", "started_at": None, "finished_at": None,
                           "last": {}, "progress": 0}
-_next_due = 0.0
+_next_due: float | None = None         # when the daily look is due (computed on first use)
 _reset = False                         # the address changed during a scan: forget what it found when it ends
 
 
@@ -64,8 +65,34 @@ def _password() -> str:
 def config() -> dict:
     s = db.setting("lyrics_share", {}) or {}
     return {"address": s.get("address") or "", "username": s.get("username") or "",
-            "every": int(s.get("every") or DEFAULT_EVERY), "on": bool(s.get("on", True)),
+            "at": _valid_at(s.get("at")), "on": bool(s.get("on", True)),
             "password_set": bool(_password())}
+
+
+def _valid_at(v: Any) -> str:
+    m = re.match(r"^\s*(\d{1,2}):(\d{2})\s*$", str(v or ""))
+    if m and int(m.group(1)) < 24 and int(m.group(2)) < 60:
+        return f"{int(m.group(1)):02d}:{m.group(2)}"
+    return DEFAULT_AT
+
+
+def _next_at(at: str, after: float | None = None) -> float:
+    """The next time the clock shows `at` (HH:MM, local time) after `after` (default now)."""
+    h, m = (int(x) for x in _valid_at(at).split(":"))
+    t = datetime.fromtimestamp(after if after is not None else time.time()).replace(hour=h, minute=m, second=0, microsecond=0)
+    if t.timestamp() <= (after if after is not None else time.time()):
+        t += timedelta(days=1)
+    return t.timestamp()
+
+
+def _set_offline(since: int | None) -> None:
+    """Remember since when the share can't be reached (None: it can); kept across hub restarts."""
+    cur = db.setting("lyrics_share_offline")
+    if since is None:
+        if cur:
+            db.set_setting("lyrics_share_offline", None)
+    elif not cur:
+        db.set_setting("lyrics_share_offline", since)
 
 
 def parse_address(address: str) -> tuple[str, str, str]:
@@ -78,7 +105,7 @@ def parse_address(address: str) -> tuple[str, str, str]:
     return parts[0], parts[1], "/".join(parts[2:])
 
 
-def save(address: str, username: str, password: str | None, every: int, on: bool) -> dict:
+def save(address: str, username: str, password: str | None, at: str, on: bool) -> dict:
     """Save the settings. A different address forgets what was found on the old one (and looks soon)."""
     global _next_due
     address = (address or "").strip()
@@ -86,7 +113,7 @@ def save(address: str, username: str, password: str | None, every: int, on: bool
         parse_address(address)                       # raises on nonsense
     old = config()
     db.set_setting("lyrics_share", {"address": address, "username": (username or "").strip(),
-                                    "every": max(5, min(int(every or DEFAULT_EVERY), 24 * 60)), "on": bool(on)})
+                                    "at": _valid_at(at), "on": bool(on)})
     if password is not None and (password or not address):
         fd = os.open(_password_file(), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
@@ -101,7 +128,8 @@ def save(address: str, username: str, password: str | None, every: int, on: bool
         else:
             _reset = True                            # a scan of the old share is running: done when it ends
         status.update(state="idle", message="", last={}, finished_at=None)
-    _next_due = 0.0                                  # look soon with the new settings
+        _set_offline(None)
+    _next_due = _next_at(_valid_at(at))              # the next look is at the set time (or on "Scan now")
     return view()
 
 
@@ -125,7 +153,15 @@ def view() -> dict:
     problems = db.all("SELECT path, error FROM lyric_files WHERE error IS NOT NULL ORDER BY scanned_at DESC LIMIT 8")
     return {**c, "status": dict(status), "files": counts["files"], "songs": songs, "word_timed": counts["word_timed"],
             "problems": counts["problems"], "problem_files": problems,
-            "next_scan_in": max(0, int(_next_due - time.time())) if c["address"] and c["on"] else None}
+            "offline_since": db.setting("lyrics_share_offline") if c["address"] and c["on"] else None,
+            "next_scan_at": int(_next_scan() * 1000) if c["address"] and c["on"] else None}
+
+
+def _next_scan() -> float:
+    global _next_due
+    if _next_due is None:
+        _next_due = _next_at(config()["at"])
+    return _next_due
 
 
 # ---------------------------------------------------------------- SMB
@@ -341,7 +377,7 @@ def scan(full: bool = False) -> dict | None:
         return None
     try:
         cfg = config()
-        _next_due = time.time() + cfg["every"] * 60
+        _next_due = _next_at(cfg["at"])
         if not cfg["address"]:
             return {}
         status.update(state="scanning", message="Connecting", started_at=now(), progress=0)
@@ -353,6 +389,7 @@ def scan(full: bool = False) -> dict | None:
             return None
         except ShareError as e:
             status.update(state="failed", message=str(e), finished_at=now())
+            _set_offline(now())
             return None
         counts = {"files": 0, "new": 0, "changed": 0, "gone": 0, "problems": 0}
         try:
@@ -393,6 +430,7 @@ def scan(full: bool = False) -> dict | None:
             counts.update(applied)
             msg = "" if not errors else f"{len(errors)} folders couldn't be read (removed files are kept until they can): " \
                 + "; ".join(errors[:3])
+            _set_offline(None)                       # we got in and could read the top folder
             status.update(state="idle" if not errors else "partly", message=msg, finished_at=now(), last=counts)
             if counts["new"] or counts["changed"] or counts["gone"]:
                 log.info("Lyrics share: %s", counts)
@@ -400,6 +438,7 @@ def scan(full: bool = False) -> dict | None:
         except Exception as e:
             log.exception("Lyrics share scan")
             status.update(state="failed", message=_explain(e), finished_at=now(), last=counts)
+            _set_offline(now())
             return None
         finally:
             share.close()
@@ -409,7 +448,7 @@ def scan(full: bool = False) -> dict | None:
             _reset = False
             _forget_all()
             status.update(state="idle", message="", last={})
-            _next_due = 0.0
+            _set_offline(None)
         _lock.release()
 
 
@@ -419,7 +458,7 @@ def running() -> bool:
 
 def due() -> bool:
     c = config()
-    return bool(c["address"] and c["on"] and time.time() >= _next_due and not running())
+    return bool(c["address"] and c["on"] and time.time() >= _next_scan() and not running())
 
 
 def scan_in_background(full: bool = False) -> bool:

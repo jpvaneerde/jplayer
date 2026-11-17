@@ -35,7 +35,15 @@ try:
     from urllib.parse import quote, unquote
     import wave
     import requests
-    import sounddevice as sd
+    try:
+        import sounddevice as sd
+    except OSError:
+        # PortAudio (the system library behind sounddevice) is missing, as on a build machine without sound hardware.
+        # The Pi installer always provides it; the microphone then simply isn't there.
+        if os.environ.get("JPLAY_NO_AUDIO") or os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules:
+            sd = None
+        else:
+            raise
     import numpy as np
     from contextlib import asynccontextmanager
     from fastapi import FastAPI, Request
